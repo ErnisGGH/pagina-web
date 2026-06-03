@@ -221,7 +221,7 @@
     .card-media{position:relative;aspect-ratio:1;background:#0F0F14;overflow:hidden;}
     .card-media img{transition:transform .6s cubic-bezier(.16,1,.3,1);}
     .catalog-card:hover .card-media img{transform:scale(1.06);}
-    .card-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85) 0%,rgba(0,0,0,.3) 55%,transparent 100%);opacity:0;transition:opacity .35s;display:flex;flex-direction:column;justify-content:flex-end;padding:14px;}
+    .card-overlay{position:absolute;inset:0;z-index:3;background:linear-gradient(to top,rgba(0,0,0,.85) 0%,rgba(0,0,0,.3) 55%,transparent 100%);opacity:0;transition:opacity .35s;display:flex;flex-direction:column;justify-content:flex-end;padding:14px;}
     .catalog-card:hover .card-overlay{opacity:1;}
     @media(hover:none){.card-overlay{opacity:1;}}
     .card-overlay-btns{display:flex;gap:8px;}
@@ -342,11 +342,7 @@
     </button>
   </div>
   <div style="flex:1;position:relative;min-height:0;background:#000;overflow:hidden;">
-    <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
-    <button id="mvArBtn" class="mv-ar-btn" onclick="launchAR()" style="display:none;">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      Ver en AR
-    </button>
+    <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
     <canvas id="vmCanvas3mf" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
     <div id="vmImgView" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:#000;">
       <img id="vmImgEl" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">
@@ -629,8 +625,6 @@
 
     viewer.style.display='none'; canvas3mf.style.display='none';
     noModel.style.display='none'; imgView.style.display='none'; arBtn.style.display='none';
-    const mvArBtn = document.getElementById('mvArBtn');
-    if (mvArBtn) mvArBtn.style.display='none';
     const vm3mfSection = document.getElementById('vm3mfSection');
     if (vm3mfSection) { vm3mfSection.style.display='none'; document.getElementById('vm3mfSwatches').innerHTML=''; }
     if (window.NX_3MF) window.NX_3MF.dispose();
@@ -657,12 +651,6 @@
       viewer.removeAttribute('src');
       setTimeout(()=>{ viewer.setAttribute('src', modelUrl); }, 50);
       arBtn.style.display='flex';
-      // Mostrar botón AR flotante dentro del visor al cargar
-      const mvArBtn = document.getElementById('mvArBtn');
-      if (mvArBtn) {
-        mvArBtn.style.display='none';
-        viewer.addEventListener('load', () => { mvArBtn.style.display='flex'; }, { once:true });
-      }
     }
 
     const colorIds = item.colorIds || [];
@@ -712,8 +700,6 @@
     document.getElementById('viewerModal').style.display = 'none';
     document.body.style.overflow = '';
     document.getElementById('vmViewer').removeAttribute('src');
-    const mvArBtn = document.getElementById('mvArBtn');
-    if (mvArBtn) mvArBtn.style.display='none';
     const pk = document.getElementById('_3mfPicker'); if (pk) pk.remove();
     if (window.NX_3MF) window.NX_3MF.dispose();
   }

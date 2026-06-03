@@ -907,6 +907,7 @@
     .card-overlay {
       position: absolute;
       inset: 0;
+      z-index: 3;
       background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 55%, transparent 100%);
       opacity: 0;
       transition: opacity 0.35s ease;
@@ -1024,6 +1025,7 @@
       overflow: hidden;
       background: #0D1520;
       border: 1px solid #1A2535;
+      touch-action: none;
     }
     .filament-surface,
     .filament-sheen {
