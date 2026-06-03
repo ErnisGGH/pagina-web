@@ -949,6 +949,7 @@
       transition: background 0.2s, border-color 0.2s;
     }
     .btn-ar-card:hover { background: rgba(37,211,102,0.12); border-color: #25D366; }
+    .ar-badge{position:absolute;top:10px;right:10px;z-index:12;background:linear-gradient(135deg,#00C853,#25D366);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;padding:4px 9px;border-radius:100px;pointer-events:none;box-shadow:0 2px 10px rgba(37,211,102,.4);}
     /* Botón AR genérico (modal viewer) */
     .btn-ar {
       display: flex;
@@ -2321,8 +2322,25 @@
     // ============================================================
     // CONSTRUIR CATÁLOGO DINÁMICO (solo destacados en el inicio)
     // ============================================================
+    const DEF_CAT = [
+      {
+        id: 'spiderman-mk2',
+        name: 'Mini Spiderman MK2',
+        desc: 'Figura articulada multicolor, alta resolución',
+        mat: 'PLA Multicolor',
+        cat: 'Figuras',
+        collection: 'Figuras',
+        glb: 'assets/Models/Mini+spidy+mk2+colour+3mf.glb',
+        glbType: 'glb',
+        vis: true,
+        featured: true,
+        colorIds: ['pla-rojo','pla-negro','pla-azul','pla-blanco']
+      }
+    ];
+
     function buildCatalog() {
-      const allItems = lsGet(LS_CAT, []);
+      const stored   = lsGet(LS_CAT, null);
+      const allItems = (stored && stored.length) ? stored : DEF_CAT;
       const visible  = allItems.filter(x => x.vis !== false);
       const featured = visible.filter(x => x.featured === true);
       const show     = featured.length > 0 ? featured.slice(0, 6) : visible.slice(0, 6);
@@ -2348,8 +2366,16 @@
         return `
           <article class="catalog-card scroll-reveal" data-category="${item.cat||''}" data-id="${item.id}" style="cursor:pointer;" onclick="openViewer('${item.id}')">
             <div class="card-media" style="cursor:pointer;">
+              ${hasGlb ? `<span class="ar-badge">AR</span>` : ''}
               ${item.img ? `
-              <img src="${item.img}" alt="${item.name}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;" loading="lazy">` : `
+              <img src="${item.img}" alt="${item.name}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;" loading="lazy">`
+              : hasGlb ? `
+              <model-viewer id="card-mv-${item.id}"
+                ${!item.glb.startsWith('idb:') ? `src="${item.glb.split('/').map(s=>encodeURIComponent(s)).join('/')}"` : ''}
+                auto-rotate disable-zoom loading="lazy"
+                style="position:absolute;inset:0;width:100%;height:100%;z-index:1;--poster-color:#0F0F14;background:transparent;"
+              ></model-viewer>`
+              : `
               <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F0F14;z-index:1;">
                 <div class="cube-scene"><div class="rotating-cube" style="${delay};"><div class="cube-face front"></div><div class="cube-face back"></div><div class="cube-face left"></div><div class="cube-face right"></div><div class="cube-face top"></div><div class="cube-face bottom"></div></div></div>
                 <p style="margin-top:14px;font-size:10px;font-family:monospace;color:#4D5070;letter-spacing:.15em;">${(item.cat||'MODELO').toUpperCase()}</p>
@@ -2359,8 +2385,8 @@
                   <button class="btn-view3d" onclick="event.stopPropagation();openViewer('${item.id}')">
                     <i data-lucide="box" style="width:12px;height:12px;flex-shrink:0;"></i> Ver 3D
                   </button>
-                  ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();openViewer('${item.id}')">
-                    <i data-lucide="scan" style="width:12px;height:12px;flex-shrink:0;"></i> AR
+                  ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();openViewerForAR('${item.id}')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AR
                   </button>` : ''}
                 </div>
               </div>
@@ -2411,7 +2437,20 @@
       }
     }
 
-    // Dispara AR desde la tarjeta; si no disponible abre el visor modal
+    function launchAR() {
+      const viewer = document.getElementById('vmViewer') || document.getElementById('showcaseViewer');
+      if (viewer) try { viewer.activateAR(); } catch(e) {}
+    }
+
+    async function openViewerForAR(itemId) {
+      await openViewer(itemId);
+      const viewer = document.getElementById('vmViewer');
+      if (!viewer || viewer.style.display === 'none') return;
+      const tryAR = () => { try { viewer.activateAR(); } catch(e) {} };
+      if (viewer.loaded) tryAR();
+      else viewer.addEventListener('load', tryAR, { once: true });
+    }
+
     function _cardAR(itemId) {
       const mv = document.getElementById('card-mv-' + itemId);
       if (mv && typeof mv.activateAR === 'function') {
