@@ -2251,18 +2251,27 @@
       // Aplicar settings del admin
       applySettings();
 
-      // Construir selector dinámico de filamentos
-      buildFilamentSelector();
-
-      // Inicializar visor de filamentos (model-viewer)
-      buildShowcaseTabs();
-
-      // Activar primer filamento
-      const fils = getFilaments();
-      if (fils.length) setFilamentById(fils[0].id);
-
-      // Cargar catálogo dinámico desde localStorage
+      // Catálogo: carga inmediata (está arriba del fold en móvil)
       buildCatalog();
+
+      // Filamentos y showcase: diferir hasta que la sección sea visible
+      buildFilamentSelector();
+      const _filSection = document.getElementById('filamentos');
+      if (_filSection && 'IntersectionObserver' in window) {
+        const _filObs = new IntersectionObserver(entries => {
+          if (entries[0].isIntersecting) {
+            _filObs.disconnect();
+            buildShowcaseTabs();
+            const fils = getFilaments();
+            if (fils.length) setFilamentById(fils[0].id);
+          }
+        }, { rootMargin: '200px' });
+        _filObs.observe(_filSection);
+      } else {
+        buildShowcaseTabs();
+        const fils = getFilaments();
+        if (fils.length) setFilamentById(fils[0].id);
+      }
 
       // ── Animación de entrada del Hero ──────────────────────────
       const heroItems = [
@@ -2513,8 +2522,9 @@
 
       // Abrir el modal ANTES de cargar el 3MF: el canvas necesita dimensiones reales
       const modal = document.getElementById('viewerModal');
+      window._modalScrollY = window.scrollY;
+      document.body.style.cssText = `overflow:hidden;position:fixed;top:-${window._modalScrollY}px;width:100%;`;
       modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
       if (typeof lucide !== 'undefined') lucide.createIcons();
 
       // Ocultar todo por defecto
@@ -2589,7 +2599,8 @@
 
     function closeViewer() {
       document.getElementById('viewerModal').style.display = 'none';
-      document.body.style.overflow = '';
+      document.body.style.cssText = '';
+      window.scrollTo(0, window._modalScrollY || 0);
       document.getElementById('vmViewer').removeAttribute('src');
       const pk = document.getElementById('_3mfPicker'); if (pk) pk.remove();
       if (window.NX_3MF) window.NX_3MF.dispose();

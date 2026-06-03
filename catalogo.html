@@ -342,7 +342,7 @@
     </button>
   </div>
   <div style="flex:1;position:relative;min-height:0;background:#000;overflow:hidden;">
-    <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" scale="0.001 0.001 0.001" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
+    <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
     <canvas id="vmCanvas3mf" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
     <div id="vmImgView" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:#000;">
       <img id="vmImgEl" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">
@@ -618,9 +618,10 @@
     const imgView = document.getElementById('vmImgView');
     const imgEl   = document.getElementById('vmImgEl');
 
-    // Abrir el modal ANTES de cargar el 3MF: el canvas necesita dimensiones reales
+    // Abrir el modal — fijar body para iOS (overflow:hidden solo no es suficiente)
+    window._modalScrollY = window.scrollY;
+    document.body.style.cssText = `overflow:hidden;position:fixed;top:-${window._modalScrollY}px;width:100%;`;
     document.getElementById('viewerModal').style.display = 'flex';
-    document.body.style.overflow = 'hidden';
     if (typeof lucide !== 'undefined') lucide.createIcons();
 
     viewer.style.display='none'; canvas3mf.style.display='none';
@@ -698,7 +699,8 @@
 
   function closeViewer() {
     document.getElementById('viewerModal').style.display = 'none';
-    document.body.style.overflow = '';
+    document.body.style.cssText = '';
+    window.scrollTo(0, window._modalScrollY || 0);
     document.getElementById('vmViewer').removeAttribute('src');
     const pk = document.getElementById('_3mfPicker'); if (pk) pk.remove();
     if (window.NX_3MF) window.NX_3MF.dispose();
