@@ -8,6 +8,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.152.2/build/three.module.min.js","three/addons/":"https://unpkg.com/three@0.152.2/examples/jsm/"}}
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+  import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+  window._THREE = THREE;
+  window._ThreeMFLoader = ThreeMFLoader;
+  window._GLTFExporter = GLTFExporter;
+</script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     :root{
@@ -491,7 +502,7 @@
         <i data-lucide="upload"></i> Cargar desde PC (.glb / .3mf)
       </button>
     </div>
-    <p class="form-hint" style="margin-top:6px;"><strong>.glb/.gltf</strong> = visor 3D + AR · <strong>.3mf</strong> = colores originales multicolor (sin AR)</p>
+    <p class="form-hint" style="margin-top:6px;"><strong>.glb/.gltf</strong> = visor 3D + AR · <strong>.3mf</strong> = se convierte automáticamente a GLB con colores + AR ✅</p>
   </div>
 
   <div class="two-col" style="margin-top:4px;">
@@ -873,6 +884,39 @@ function clearCatImg(){
   document.getElementById('cmImg').value='';
   _setCatImgBadge(null);
 }
+async function convert3mfToGlb(buffer) {
+  const THREE = window._THREE;
+  const ThreeMFLoader = window._ThreeMFLoader;
+  const GLTFExporter = window._GLTFExporter;
+  if (!ThreeMFLoader || !GLTFExporter) throw new Error('Three.js no cargado aún');
+
+  const blob = URL.createObjectURL(new Blob([buffer], {type:'model/3mf'}));
+  const loader = new ThreeMFLoader();
+  const group = await new Promise((res,rej) => loader.load(blob, res, undefined, rej));
+  URL.revokeObjectURL(blob);
+
+  // Habilitar vertex colors y DoubleSide en todos los meshes
+  group.traverse(c => {
+    if (!c.isMesh) return;
+    const mats = Array.isArray(c.material) ? c.material : [c.material];
+    mats.forEach(m => {
+      m.side = THREE.DoubleSide;
+      if (c.geometry.attributes.color) { m.vertexColors = true; m.needsUpdate = true; }
+    });
+  });
+
+  // Corrección de orientación: 3MF usa Z-up, GLTF usa Y-up
+  group.rotation.x = -Math.PI / 2;
+  // Escala: 3MF en mm → GLTF en metros (para AR correcto)
+  group.scale.set(0.001, 0.001, 0.001);
+  group.updateMatrixWorld(true);
+
+  const exporter = new GLTFExporter();
+  const glbBuf = await new Promise((res,rej) => {
+    exporter.parse(group, res, rej, { binary: true });
+  });
+  return glbBuf; // ArrayBuffer
+}
 async function handleCatGlbPick(){
   const input=document.getElementById('cm-glb-file');
   if(!input.files[0])return;
@@ -881,13 +925,33 @@ async function handleCatGlbPick(){
   document.getElementById('cmId').value=id;
   const ext=file.name.split('.').pop().toLowerCase();
   const key='nx_cat_model_'+id;
-  showToast('Guardando modelo...');
-  try{
-    const buf=await file.arrayBuffer();
-    await nxIdbPut(key,buf);
-    _setCatGlbBadge(file.name,'idb:'+key,ext);
-    showToast('✓ '+file.name+' cargado');
-  }catch(e){ showToast('Error al guardar el modelo','error'); console.error(e); }
+
+  if(ext==='3mf'){
+    showToast('⚙️ Convirtiendo 3MF a GLB con colores...');
+    try{
+      const raw=await file.arrayBuffer();
+      const glbBuf=await convert3mfToGlb(raw);
+      await nxIdbPut(key,glbBuf);
+      const glbName=file.name.replace(/\.3mf$/i,'.glb');
+      _setCatGlbBadge(glbName,'idb:'+key,'glb');
+      showToast('✅ Convertido y listo: '+glbName);
+    }catch(e){
+      // Fallback: guardar como 3mf si la conversión falla
+      console.error('Conversión fallida, guardando como 3mf:',e);
+      const raw=await file.arrayBuffer();
+      await nxIdbPut(key,raw);
+      _setCatGlbBadge(file.name,'idb:'+key,'3mf');
+      showToast('⚠️ Guardado como 3MF (sin AR). Recarga si Three.js aún carga.','error');
+    }
+  } else {
+    showToast('Guardando modelo...');
+    try{
+      const buf=await file.arrayBuffer();
+      await nxIdbPut(key,buf);
+      _setCatGlbBadge(file.name,'idb:'+key,ext);
+      showToast('✓ '+file.name+' cargado');
+    }catch(e){ showToast('Error al guardar el modelo','error'); console.error(e); }
+  }
 }
 async function clearCatGlb(){
   const badge=document.getElementById('cmGlbBadge');
