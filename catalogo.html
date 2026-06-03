@@ -407,7 +407,21 @@
   const lsGet = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
   const getCfg  = () => ({ wa:'528297996751', ig:'https://instagram.com/nexomaker3d', tt:'https://tiktok.com/@nexomaker3d', waMsg:'¡Hola NEXOMAKER3D! Quiero cotizar un proyecto.', waPieza:'¡Hola NEXOMAKER3D! Me interesa la pieza "{nombre}". ¿Pueden cotizarla?', ...lsGet(LS_CFG,{}) });
   const getFils = () => lsGet(LS_FIL,null)||DEF_FIL;
-  const getCats = () => lsGet(LS_CAT,[])||[];
+  const DEF_CAT = [
+    {
+      id: 'spiderman-mk2',
+      name: 'Mini Spiderman MK2',
+      desc: 'Figura articulada multicolor, alta resolución',
+      mat: 'PLA Multicolor',
+      collection: 'Figuras',
+      glb: 'assets/Models/Mini+spidy+mk2+colour+3mf.glb',
+      glbType: 'glb',
+      vis: true,
+      featured: true,
+      colorIds: ['pla-rojo','pla-negro','pla-azul','pla-blanco']
+    }
+  ];
+  const getCats = () => { const v = lsGet(LS_CAT, null); return (v && v.length) ? v : DEF_CAT; };
   const isDarkHex = hex => { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return(r*299+g*587+b*114)/1000<80; };
 
   // State

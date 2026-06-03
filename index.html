@@ -711,11 +711,12 @@
       pointer-events: none;
     }
     .hero-title {
-      font-size: clamp(3.5rem, 15vw, 10rem);
+      font-size: clamp(1.9rem, 9vw, 10rem);
       font-weight: 900;
       letter-spacing: -0.05em;
       line-height: 0.92;
       margin: 0;
+      word-break: break-word;
     }
     .hero-tagline {
       font-size: clamp(1rem, 3vw, 1.5rem);
@@ -805,6 +806,11 @@
       margin-top: 2px;
     }
     .hero-stat-div { width: 1px; height: 32px; background: rgba(255,105,32,0.15); }
+    @media (max-width: 480px) {
+      .hero-stats { padding: 12px 8px; }
+      .hero-stat { padding: 0 8px; }
+      .hero-stat-label { font-size: 8px; letter-spacing: .02em; }
+    }
 
     /* Scroll indicator */
     @keyframes scrollBounce {
@@ -2687,8 +2693,12 @@
     // ============================================================
     const LS_SHOWCASE = 'nx_showcase_models';
 
+    const DEF_SHOWCASE = [
+      { name: 'Spiderman MK2', url: 'assets/Models/Mini+spidy+mk2+colour+3mf.glb' }
+    ];
     function getShowcaseModels() {
-      return lsGet(LS_SHOWCASE, []) || [];
+      const v = lsGet(LS_SHOWCASE, null);
+      return (v && v.length) ? v : DEF_SHOWCASE;
     }
 
     // ============================================================
