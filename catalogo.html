@@ -651,11 +651,17 @@
     } else {
       viewer.style.display='block';
       viewer.removeAttribute('src');
-      // Escala AR: si el modelo está en mm (exportado de slicer), convertir a metros
-      if (item.arScale) viewer.setAttribute('scale', item.arScale);
-      else viewer.removeAttribute('scale');
-      setTimeout(()=>{ viewer.setAttribute('src', modelUrl); }, 50);
+      viewer.removeAttribute('scale');
       arBtn.style.display='flex';
+      // Si el modelo está en mm, parchar el GLB para embeber escala correcta en AR
+      if (item.arScale) {
+        const scaleArr = item.arScale.split(' ').map(Number);
+        patchGlbScale(modelUrl, scaleArr).then(patchedUrl => {
+          viewer.setAttribute('src', patchedUrl);
+        });
+      } else {
+        setTimeout(()=>{ viewer.setAttribute('src', modelUrl); }, 50);
+      }
     }
 
     const colorIds = item.colorIds || [];
@@ -682,6 +688,37 @@
 
     const msg = (cfg.waPieza||'¡Hola NEXOMAKER3D! Me interesa la pieza "{nombre}".').replace('{nombre}', item.name);
     document.getElementById('vmWa').href = `https://wa.me/${cfg.wa}?text=${encodeURIComponent(msg)}`;
+  }
+
+  // Parcha el GLB binario para embeber el nodo de escala directamente en el GLTF
+  // Esto garantiza que iOS AR Quick Look reciba el modelo con la escala correcta
+  async function patchGlbScale(url, scale) {
+    try {
+      const ab = await fetch(url).then(r => r.arrayBuffer());
+      const dv = new DataView(ab);
+      if (dv.getUint32(0, true) !== 0x46546C67) return url; // no es GLB
+      const jsonLen = dv.getUint32(12, true);
+      const gltf = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, 20, jsonLen)));
+      const scene = gltf.scenes?.[gltf.scene || 0];
+      if (!scene?.nodes?.length) return url;
+      if (!gltf.nodes) gltf.nodes = [];
+      gltf.nodes.push({ name: '__ar_scale__', scale: scale, children: scene.nodes });
+      scene.nodes = [gltf.nodes.length - 1];
+      let js = JSON.stringify(gltf);
+      const pad = (4 - (js.length % 4)) % 4;
+      js += ' '.repeat(pad);
+      const jb = new TextEncoder().encode(js);
+      const binStart = 20 + jsonLen;
+      const binBytes = new Uint8Array(ab, binStart);
+      const total = 12 + 8 + jb.length + binBytes.length;
+      const out = new ArrayBuffer(total);
+      const odv = new DataView(out);
+      const oa = new Uint8Array(out);
+      odv.setUint32(0, 0x46546C67, true); odv.setUint32(4, 2, true); odv.setUint32(8, total, true);
+      odv.setUint32(12, jb.length, true); odv.setUint32(16, 0x4E4F534A, true);
+      oa.set(jb, 20); oa.set(binBytes, 20 + jb.length);
+      return URL.createObjectURL(new Blob([out], { type: 'model/gltf-binary' }));
+    } catch(e) { return url; }
   }
 
   function launchAR() {
