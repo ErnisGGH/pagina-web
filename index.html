@@ -2243,15 +2243,18 @@
     // ============================================================
     // INICIALIZACIÓN (DOMContentLoaded)
     // ============================================================
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
 
       // Inicializar Lucide icons
       if (typeof lucide !== 'undefined') lucide.createIcons();
 
+      // Cargar catálogo remoto (catalog.json publicado desde admin)
+      await loadRemoteCatalog();
+
       // Aplicar settings del admin
       applySettings();
 
-      // Catálogo: carga inmediata (está arriba del fold en móvil)
+      // Catálogo: carga inmediata
       buildCatalog();
 
       // Filamentos y showcase: diferir hasta que la sección sea visible
@@ -2362,9 +2365,19 @@
       }
     ];
 
+    let _remoteCatalog = null;
+    async function loadRemoteCatalog() {
+      try {
+        const r = await fetch('catalog.json?_=' + Date.now());
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.catalog?.length) _remoteCatalog = d.catalog;
+      } catch(e) {}
+    }
+
     function buildCatalog() {
       const stored   = lsGet(LS_CAT, null);
-      const allItems = (stored && stored.length) ? stored : DEF_CAT;
+      const allItems = _remoteCatalog || (stored && stored.length ? stored : DEF_CAT);
       const visible  = allItems.filter(x => x.vis !== false);
       const featured = visible.filter(x => x.featured === true);
       const show     = featured.length > 0 ? featured.slice(0, 6) : visible.slice(0, 6);

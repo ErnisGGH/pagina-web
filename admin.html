@@ -337,9 +337,42 @@
 
     <!-- CATÁLOGO -->
     <section id="sec-catalogo" class="admin-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:28px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div><h1 class="sec-title">Catálogo</h1><p style="font-size:14px;color:var(--muted);">Piezas publicadas en la web</p></div>
-        <button class="btn btn-primary" onclick="openCatModal()"><i data-lucide="plus"></i>Agregar pieza</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-ghost" onclick="openGhPublish()" title="Publicar en GitHub Pages">
+            <i data-lucide="upload-cloud"></i>Publicar en GitHub
+          </button>
+          <button class="btn btn-primary" onclick="openCatModal()"><i data-lucide="plus"></i>Agregar pieza</button>
+        </div>
+      </div>
+      <!-- Panel GitHub publish -->
+      <div id="ghPanel" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+          <i data-lucide="github" style="width:20px;height:20px;color:var(--steel);"></i>
+          <strong style="font-size:15px;">Publicar en GitHub Pages</strong>
+          <button onclick="document.getElementById('ghPanel').style.display='none'" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;">✕</button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6;">
+          Esto sube el catálogo y los modelos GLB al repositorio <strong style="color:#fff;">ErnisGGH/pagina-web</strong>. Los cambios estarán visibles en el teléfono en ~1 minuto.
+        </p>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <label style="font-size:12px;color:var(--gray);display:block;margin-bottom:4px;">Token de GitHub (repo scope)</label>
+            <div style="display:flex;gap:8px;">
+              <input type="password" id="ghTokenInput" class="form-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="flex:1;font-size:13px;"
+                value="${localStorage.getItem('nx_gh_token')||''}">
+              <button class="btn btn-ghost btn-sm" onclick="localStorage.setItem('nx_gh_token',document.getElementById('ghTokenInput').value);showToast('Token guardado ✓')">Guardar</button>
+            </div>
+            <p style="font-size:11px;color:var(--muted);margin-top:4px;">
+              <a href="https://github.com/settings/tokens/new?scopes=repo&description=nexomaker3d-admin" target="_blank" style="color:var(--steel);">Crear token aquí</a> → marca "repo" → genera → pega arriba.
+            </p>
+          </div>
+          <button class="btn btn-primary" onclick="publishToGitHub()" id="ghPublishBtn">
+            <i data-lucide="rocket"></i> Publicar ahora
+          </button>
+          <p id="ghLog" style="font-size:12px;color:var(--muted);min-height:20px;"></p>
+        </div>
       </div>
       <div class="card" style="overflow-x:auto;">
         <table class="cat-table">
@@ -890,32 +923,42 @@ async function convert3mfToGlb(buffer) {
   const GLTFExporter = window._GLTFExporter;
   if (!ThreeMFLoader || !GLTFExporter) throw new Error('Three.js no cargado aún');
 
-  const blob = URL.createObjectURL(new Blob([buffer], {type:'model/3mf'}));
+  const blobUrl = URL.createObjectURL(new Blob([buffer], {type:'model/3mf'}));
   const loader = new ThreeMFLoader();
-  const group = await new Promise((res,rej) => loader.load(blob, res, undefined, rej));
-  URL.revokeObjectURL(blob);
+  const group = await new Promise((res,rej) => loader.load(blobUrl, res, undefined, rej));
+  URL.revokeObjectURL(blobUrl);
 
-  // Habilitar vertex colors y DoubleSide en todos los meshes
+  // Convertir todos los materiales a MeshStandardMaterial (requerido por GLTFExporter)
+  // y asegurar que los vertex colors se preserven con color base blanco
   group.traverse(c => {
     if (!c.isMesh) return;
     const mats = Array.isArray(c.material) ? c.material : [c.material];
-    mats.forEach(m => {
-      m.side = THREE.DoubleSide;
-      if (c.geometry.attributes.color) { m.vertexColors = true; m.needsUpdate = true; }
+    c.material = mats.map(m => {
+      const hasVColors = !!(c.geometry.attributes.color);
+      const stdMat = new THREE.MeshStandardMaterial({
+        vertexColors: hasVColors,
+        // Color base BLANCO cuando hay vertex colors (si no, los vertex colors se multiplican por el color base)
+        color: hasVColors ? new THREE.Color(1,1,1) : (m.color || new THREE.Color(1,1,1)),
+        roughness: 0.8,
+        metalness: 0.0,
+        side: THREE.FrontSide, // GLTFExporter prefiere FrontSide
+      });
+      return stdMat;
     });
+    if (c.material.length === 1) c.material = c.material[0];
   });
 
-  // Corrección de orientación: 3MF usa Z-up, GLTF usa Y-up
+  // Corrección orientación: 3MF usa Z-up → GLTF usa Y-up
   group.rotation.x = -Math.PI / 2;
-  // Escala: 3MF en mm → GLTF en metros (para AR correcto)
+  // Escala: 3MF en mm → GLTF en metros (tamaño real en AR)
   group.scale.set(0.001, 0.001, 0.001);
   group.updateMatrixWorld(true);
 
   const exporter = new GLTFExporter();
   const glbBuf = await new Promise((res,rej) => {
-    exporter.parse(group, res, rej, { binary: true });
+    exporter.parse(group, res, rej, { binary: true, embedImages: false });
   });
-  return glbBuf; // ArrayBuffer
+  return glbBuf;
 }
 async function handleCatGlbPick(){
   const input=document.getElementById('cm-glb-file');
@@ -963,6 +1006,106 @@ async function clearCatGlb(){
 // ─── MODALES ───
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function oClose(e,id){if(e.target===document.getElementById(id))closeModal(id);}
+
+// ─── GITHUB PUBLISH ───
+function openGhPublish(){
+  if(typeof lucide!=='undefined')lucide.createIcons();
+  const panel=document.getElementById('ghPanel');
+  panel.style.display=panel.style.display==='none'?'block':'none';
+  // Pre-fill token if saved
+  const saved=localStorage.getItem('nx_gh_token')||'';
+  const inp=document.getElementById('ghTokenInput');
+  if(inp&&saved)inp.value=saved;
+}
+
+async function publishToGitHub(){
+  const token=(document.getElementById('ghTokenInput').value||'').trim();
+  if(!token){showToast('Ingresa tu token de GitHub primero','error');return;}
+  localStorage.setItem('nx_gh_token',token);
+
+  const owner='ErnisGGH', repo='pagina-web';
+  const log=document.getElementById('ghLog');
+  const btn=document.getElementById('ghPublishBtn');
+  btn.disabled=true;
+
+  const ghLog=(msg)=>{log.textContent=msg;};
+  const ghApi=async(path,body)=>{
+    const r=await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`,{
+      method:'PUT',
+      headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    if(!r.ok){const e=await r.json();throw new Error(e.message||r.statusText);}
+    return r.json();
+  };
+  const getSha=async(path)=>{
+    const r=await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`,{
+      headers:{'Authorization':'token '+token}
+    });
+    if(r.status===404)return null;
+    const d=await r.json();
+    return d.sha||null;
+  };
+  const toB64=(buf)=>{
+    let b='';
+    const a=new Uint8Array(buf);
+    for(let i=0;i<a.length;i+=8192)b+=String.fromCharCode(...a.slice(i,i+8192));
+    return btoa(b);
+  };
+
+  try{
+    // 1. Subir catalog.json
+    ghLog('📋 Subiendo catálogo...');
+    const cats=g(LS.cat,[])||[];
+    const catsClean=cats.map(c=>({...c,glb:c.glb&&c.glb.startsWith('idb:')?'__pending__':c.glb}));
+    const catJson=JSON.stringify({catalog:catsClean,filaments:g(LS.fil,[])||[],settings:g(LS.cfg,{})||{}},null,2);
+    const catB64=btoa(unescape(encodeURIComponent(catJson)));
+    const catSha=await getSha('catalog.json');
+    await ghApi('catalog.json',{message:'Admin: actualizar catálogo',content:catB64,...(catSha?{sha:catSha}:{})});
+    ghLog('✅ Catálogo subido');
+
+    // 2. Subir modelos GLB desde IndexedDB
+    const idbModels=cats.filter(c=>c.glb&&c.glb.startsWith('idb:'));
+    for(const item of idbModels){
+      const key=item.glb.slice(4);
+      ghLog(`🔼 Subiendo modelo: ${item.glbName||key}...`);
+      try{
+        const buf=await new Promise((res,rej)=>{
+          const req=indexedDB.open('nexomaker3d',1);
+          req.onsuccess=e=>{const tx=e.target.result.transaction('models','readonly');const r=tx.objectStore('models').get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);};
+          req.onerror=()=>rej(req.error);
+        });
+        if(!buf){ghLog(`⚠️ Modelo ${item.name} no encontrado en IDB`);continue;}
+        const fname=(item.glbName||key.replace('nx_cat_model_','')).replace(/[^a-zA-Z0-9._-]/g,'_');
+        const ghPath=`assets/Models/${fname}`;
+        const sha=await getSha(ghPath);
+        const b64=toB64(buf);
+        await ghApi(ghPath,{message:`Admin: modelo ${fname}`,content:b64,...(sha?{sha}:{})});
+        // Actualizar referencia en el catálogo local a la URL pública
+        item.glb=`assets/Models/${fname}`;
+        item.glbType='glb';
+        ghLog(`✅ ${fname}`);
+      }catch(e){ghLog(`❌ Error en ${item.name}: ${e.message}`);}
+    }
+
+    // 3. Actualizar catalog.json con rutas públicas
+    if(idbModels.length>0){
+      ghLog('📋 Actualizando referencias de rutas...');
+      const catJson2=JSON.stringify({catalog:cats,filaments:g(LS.fil,[])||[],settings:g(LS.cfg,{})||{}},null,2);
+      const catB642=btoa(unescape(encodeURIComponent(catJson2)));
+      const catSha2=await getSha('catalog.json');
+      await ghApi('catalog.json',{message:'Admin: rutas de modelos actualizadas',content:catB642,...(catSha2?{sha:catSha2}:{})});
+    }
+
+    ghLog('🚀 ¡Publicado! En ~1 min visible en el teléfono.');
+    showToast('✅ Publicado en GitHub Pages');
+  }catch(e){
+    ghLog('❌ Error: '+e.message);
+    showToast('Error: '+e.message,'error');
+  }finally{
+    btn.disabled=false;
+  }
+}
 
 // ─── TOAST ───
 let tt;
