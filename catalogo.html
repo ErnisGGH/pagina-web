@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Catálogo completo de piezas 3D — NEXOMAKER3D">
+  <meta name="theme-color" content="#000000">
+  <title>Catálogo — NEXOMAKER3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.152.2/build/three.module.min.js","three/addons/":"https://unpkg.com/three@0.152.2/examples/jsm/"}}</script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // 3MFLoader como import estático: se carga junto al módulo, no como singleton diferido
+    const _3mfLoader = new ThreeMFLoader();
+
+    window.NX_3MF = {
+      renderer:null, scene:null, camera:null, controls:null, animId:null,
+      _colorMap:{},
+      rimLight:null, rimLight2:null,
+      async load(url, canvas) {
+        this.dispose();
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const W=Math.max(canvas.clientWidth||canvas.offsetWidth||window.innerWidth,1);
+        const H=Math.max(canvas.clientHeight||canvas.offsetHeight||window.innerHeight,1);
+        this.renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+        this.renderer.setSize(W,H,false);
+        this.renderer.outputColorSpace=THREE.SRGBColorSpace;
+        this.scene=new THREE.Scene();
+        this.scene.background=new THREE.Color(0x0D1520);
+        this.camera=new THREE.PerspectiveCamera(45,W/H,0.001,1000);
+        this.controls=new OrbitControls(this.camera,canvas);
+        this.controls.enableDamping=true; this.controls.dampingFactor=0.07;
+        this.controls.autoRotate=true; this.controls.autoRotateSpeed=0.8;
+        this.controls.enablePan=false; this.controls.maxPolarAngle=Math.PI*0.88;
+        // Iluminación calibrada (igual que NX_VIEWER)
+        this.scene.add(new THREE.AmbientLight(0xffffff,0.50));
+        const fill=new THREE.DirectionalLight(0xffffff,0.30); fill.position.set(-4,-2,-4); this.scene.add(fill);
+        const key=new THREE.DirectionalLight(0xffffff,0.55); key.position.set(5,8,5); this.scene.add(key);
+        // Rim lights duales: se intensifican en colores oscuros para mostrar detalles 3D
+        this.rimLight=new THREE.DirectionalLight(0xffffff,0.15); this.rimLight.position.set(2,3,-4); this.scene.add(this.rimLight);
+        this.rimLight2=new THREE.DirectionalLight(0xffffff,0.08); this.rimLight2.position.set(-2,2,-5); this.scene.add(this.rimLight2);
+        const group=await new Promise((res,rej)=>_3mfLoader.load(url,res,undefined,rej));
+        group.traverse(c=>{
+          if(!c.isMesh)return;
+          const mats=Array.isArray(c.material)?c.material:[c.material];
+          mats.forEach(m=>{m.side=THREE.DoubleSide;if(c.geometry.attributes.color){m.vertexColors=true;m.needsUpdate=true;}});
+        });
+        // Corrección de orientación: 3MF de slicers usa Z-up → Three.js usa Y-up
+        group.rotation.x=-Math.PI/2;
+        group.updateMatrixWorld(true);
+        // Centrar y normalizar (bbox sobre el grupo ya orientado)
+        const bbox=new THREE.Box3().setFromObject(group);
+        const center=bbox.getCenter(new THREE.Vector3()), size=bbox.getSize(new THREE.Vector3());
+        const sc=2.0/(Math.max(size.x,size.y,size.z)||1);
+        group.position.set(-center.x,-center.y,-center.z);
+        const pivot=new THREE.Group(); pivot.scale.setScalar(sc); pivot.add(group); this.scene.add(pivot);
+        // Cámara: frente al modelo, ligeramente elevada (igual que NX_VIEWER)
+        const camDist=2.0*2.6;
+        this.camera.position.set(0,2.0*0.15,camDist);
+        this.camera.lookAt(0,0,0); this.controls.target.set(0,0,0);
+        this.controls.minDistance=0.5; this.controls.maxDistance=2.0*12;
+        this.camera.near=0.01; this.camera.far=500; this.camera.updateProjectionMatrix();
+        this.controls.update();
+        const tick=()=>{this.animId=requestAnimationFrame(tick);this.controls.update();this.renderer.render(this.scene,this.camera);};
+        tick();
+        const colors=this._buildColorMap(pivot);
+        this._updateBg(colors);
+        return colors;
+      },
+      _updateBg(hexColors){
+        if(!hexColors||!hexColors.length||!this.scene)return;
+        let lum=0;
+        hexColors.forEach(hex=>{
+          const r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
+          lum+=0.2126*r+0.7152*g+0.0722*b;
+        });
+        const avg=lum/hexColors.length;
+        this.scene.background=new THREE.Color(avg<0.04?0x3a4d5e:avg<0.12?0x2c3d52:0x0D1520);
+        if(this.rimLight)  this.rimLight.intensity =avg<0.04?1.8:avg<0.12?0.7:0.15;
+        if(this.rimLight2) this.rimLight2.intensity=avg<0.04?0.9:avg<0.12?0.3:0.08;
+      },
+      _buildColorMap(root){
+        this._colorMap={};
+        root.traverse(c=>{
+          if(!c.isMesh)return;
+          const mats=Array.isArray(c.material)?c.material:[c.material];
+          if(c.geometry&&c.geometry.attributes.color&&mats.some(m=>m&&m.vertexColors)){
+            const hexList=this._clusterVertexColors(c.geometry.attributes.color);
+            hexList.forEach(hex=>{
+              if(!this._colorMap[hex])this._colorMap[hex]=[];
+              if(!this._colorMap[hex].includes(c))this._colorMap[hex].push(c);
+            });
+          } else {
+            mats.forEach(m=>{
+              if(!m||!m.color)return;
+              const hex='#'+m.color.getHexString();
+              if(!this._colorMap[hex])this._colorMap[hex]=[];
+              if(!this._colorMap[hex].includes(c))this._colorMap[hex].push(c);
+            });
+          }
+        });
+        return Object.keys(this._colorMap);
+      },
+      _clusterVertexColors(attr){
+        const freq={};
+        const step=Math.max(1,Math.floor(attr.count/500));
+        const s=v=>Math.min(255,Math.round(Math.pow(Math.max(0,v),1/2.2)*255)).toString(16).padStart(2,'0');
+        for(let i=0;i<attr.count;i+=step){
+          const r=Math.round(attr.getX(i)*16)/16,g=Math.round(attr.getY(i)*16)/16,b=Math.round(attr.getZ(i)*16)/16;
+          const hex='#'+s(r)+s(g)+s(b); freq[hex]=(freq[hex]||0)+1;
+        }
+        const result=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([h])=>h);
+        return result.length?result:['#ffffff'];
+      },
+      async loadCard(url,canvas){
+        await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+        const W=Math.max(canvas.clientWidth||canvas.offsetWidth||300,1);
+        const H=Math.max(canvas.clientHeight||canvas.offsetHeight||280,1);
+        const renderer=new THREE.WebGLRenderer({canvas,antialias:false,alpha:true});
+        renderer.setPixelRatio(1); renderer.setSize(W,H);
+        renderer.outputColorSpace=THREE.SRGBColorSpace;
+        const scene=new THREE.Scene();
+        const camera=new THREE.PerspectiveCamera(45,W/H,0.01,500);
+        scene.add(new THREE.AmbientLight(0xffffff,0.90));
+        const kl=new THREE.DirectionalLight(0xffffff,0.60); kl.position.set(3,5,3); scene.add(kl);
+        const rl=new THREE.DirectionalLight(0xffffff,0.30); rl.position.set(-2,2,-4); scene.add(rl);
+        try{
+          const group=await new Promise((res,rej)=>_3mfLoader.load(url,res,undefined,rej));
+          group.traverse(c=>{
+            if(!c.isMesh)return;
+            const mats=Array.isArray(c.material)?c.material:[c.material];
+            mats.forEach(m=>{m.side=THREE.DoubleSide;if(c.geometry.attributes.color){m.vertexColors=true;m.needsUpdate=true;}});
+          });
+          group.rotation.x=-Math.PI/2; group.updateMatrixWorld(true);
+          const bbox=new THREE.Box3().setFromObject(group);
+          const ctr=bbox.getCenter(new THREE.Vector3()),sz=bbox.getSize(new THREE.Vector3());
+          const sc=2.0/(Math.max(sz.x,sz.y,sz.z)||1);
+          group.position.set(-ctr.x,-ctr.y,-ctr.z);
+          const pivot=new THREE.Group(); pivot.scale.setScalar(sc); pivot.add(group); scene.add(pivot);
+          camera.position.set(0,0.3,5.2); camera.lookAt(0,0,0);
+          let animId;
+          const tick=()=>{animId=requestAnimationFrame(tick);pivot.rotation.y+=0.006;renderer.render(scene,camera);};
+          tick();
+          const ro=new ResizeObserver(()=>{
+            const w=Math.max(canvas.clientWidth||300,1),h=Math.max(canvas.clientHeight||280,1);
+            renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();
+          });
+          ro.observe(canvas);
+          canvas._nxDispose=()=>{cancelAnimationFrame(animId);renderer.dispose();ro.disconnect();};
+        }catch(e){renderer.dispose();}
+      },
+      recolorPart(originalHex,newHex,roughness=0.7,metalness=0){
+        const meshes=this._colorMap[originalHex];
+        if(!meshes)return;
+        const newColor=new THREE.Color(newHex);
+        meshes.forEach(mesh=>{
+          const mats=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+          mats.forEach(m=>{
+            if(!m)return;
+            m.vertexColors=false; m.color.copy(newColor);
+            m.roughness=parseFloat(roughness); m.metalness=parseFloat(metalness);
+            m.needsUpdate=true;
+          });
+        });
+        if(newHex!==originalHex){ this._colorMap[newHex]=meshes; delete this._colorMap[originalHex]; }
+        this._updateBg(Object.keys(this._colorMap));
+      },
+      dispose(){
+        if(this.animId)cancelAnimationFrame(this.animId);
+        if(this.renderer)this.renderer.dispose();
+        this.renderer=null;this.scene=null;this.camera=null;this.controls=null;this.animId=null;
+        this.rimLight=null; this.rimLight2=null; this._colorMap={};
+      }
+    };
+  </script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>
+    tailwind = { config: { theme: { extend: {
+      colors: { 'nx-black':'#0A0A0C','nx-deep':'#0F0F14','nx-surface':'#141419','nx-border':'#1F1F28','nx-steel':'#5B9BD5','nx-steeldark':'#3A6FA3','nx-gray':'#8090B0','nx-muted':'#4D5070','nx-orange':'#FF6920' },
+      fontFamily: { sans: ['"Space Grotesk"','"Inter"','system-ui','sans-serif'] }
+    }}}}
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;}
+    html{scroll-behavior:smooth;}
+    body{background:#0A0A0C;color:#F0F0F6;font-family:'Space Grotesk',system-ui,sans-serif;overflow-x:hidden;}
+    /* NAV */
+    #mainNav{position:fixed;top:0;left:0;right:0;z-index:100;padding:20px 24px;display:flex;align-items:center;justify-content:space-between;transition:background .4s,padding .4s;}
+    #mainNav.scrolled{background:rgba(10,10,12,.9);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);padding:14px 24px;border-bottom:1px solid rgba(255,255,255,.06);}
+    .nav-logo{font-weight:800;font-size:17px;letter-spacing:-.02em;color:#F0F0F6;text-decoration:none;display:flex;align-items:center;gap:8px;white-space:nowrap;flex-shrink:0;}
+    @media(max-width:380px){.nav-logo{font-size:14px;}}
+    .nav-logo-img{width:32px;height:32px;border-radius:50%;object-fit:cover;opacity:.92;}
+    .nav-links{display:flex;gap:28px;list-style:none;margin:0;padding:0;}
+    .nav-links a{color:#6070A0;text-decoration:none;font-size:14px;font-weight:500;transition:color .2s;}
+    .nav-links a:hover{color:#F0F0F6;}
+    @media(max-width:640px){.nav-links{display:none;}}
+    .text-gradient{background:linear-gradient(135deg,#FF6920,#FFB020,#FF6920);background-size:200%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:gradShift 5s ease-in-out infinite;}
+    @keyframes gradShift{0%,100%{background-position:0%}50%{background-position:100%}}
+    /* BUTTONS */
+    .btn-primary{display:inline-flex;align-items:center;gap:8px;background:#25D366;color:#fff;padding:14px 30px;border-radius:100px;font-weight:700;font-size:15px;text-decoration:none;transition:background .2s,transform .2s,box-shadow .2s;border:none;cursor:pointer;font-family:inherit;box-shadow:0 6px 24px rgba(37,211,102,.3);}
+    .btn-primary:hover{background:#22BE5D;transform:translateY(-2px);box-shadow:0 10px 32px rgba(37,211,102,.45);}
+    .btn-secondary{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(255,105,32,.35);color:#FF6920;padding:13px 30px;border-radius:100px;font-weight:600;font-size:15px;text-decoration:none;transition:border-color .2s,background .2s;background:rgba(255,105,32,.06);cursor:pointer;font-family:inherit;}
+    .btn-secondary:hover{border-color:#FF6920;background:rgba(255,105,32,.12);color:#FFB020;}
+    /* PILLS */
+    .pill{padding:8px 20px;border-radius:100px;border:1px solid #1F1F28;background:transparent;color:#6070A0;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;font-family:inherit;}
+    .pill:hover{border-color:#2A2A38;color:#F0F0F6;}
+    .pill.active{background:rgba(255,105,32,.1);border-color:rgba(255,105,32,.4);color:#FF6920;}
+    /* CATALOG CARDS */
+    .catalog-card{background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;position:relative;transition:transform .4s cubic-bezier(.16,1,.3,1),box-shadow .4s cubic-bezier(.16,1,.3,1),border-color .3s;cursor:pointer;}
+    .catalog-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#FF6920,#FFB020,transparent);transform:scaleX(0);transform-origin:left;transition:transform .5s cubic-bezier(.16,1,.3,1);z-index:10;}
+    .catalog-card:hover::before{transform:scaleX(1);}
+    .catalog-card:hover{transform:translateY(-8px);box-shadow:0 28px 72px rgba(0,0,0,.5),0 0 0 1px rgba(255,105,32,.15);border-color:rgba(255,105,32,.2);}
+    .card-media{position:relative;aspect-ratio:1;background:#0F0F14;overflow:hidden;}
+    .card-media img{transition:transform .6s cubic-bezier(.16,1,.3,1);}
+    .catalog-card:hover .card-media img{transform:scale(1.06);}
+    .card-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85) 0%,rgba(0,0,0,.3) 55%,transparent 100%);opacity:0;transition:opacity .35s;display:flex;flex-direction:column;justify-content:flex-end;padding:14px;}
+    .catalog-card:hover .card-overlay{opacity:1;}
+    @media(hover:none){.card-overlay{opacity:1;}}
+    .card-overlay-btns{display:flex;gap:8px;}
+    .btn-view3d{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:9px 8px;border-radius:100px;border:1px solid rgba(91,155,213,.5);background:rgba(10,10,12,.8);color:#5B9BD5;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;backdrop-filter:blur(8px);transition:background .2s;}
+    .btn-view3d:hover{background:rgba(91,155,213,.15);}
+    .btn-ar-card{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:9px 8px;border-radius:100px;border:1px solid rgba(37,211,102,.4);background:rgba(10,10,12,.8);color:#25D366;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;backdrop-filter:blur(8px);transition:background .2s;}
+    .btn-ar-card:hover{background:rgba(37,211,102,.12);}
+    .btn-ar{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px 16px;border-radius:100px;border:1px solid rgba(91,155,213,.5);background:rgba(91,155,213,.1);color:#5B9BD5;font-size:13px;font-weight:600;cursor:pointer;transition:background .2s;font-family:inherit;}
+    .btn-ar:hover{background:rgba(91,155,213,.2);}
+    /* AR badge en tarjeta */
+    .ar-badge{position:absolute;top:10px;right:10px;z-index:12;background:linear-gradient(135deg,#00C853,#25D366);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;padding:4px 9px;border-radius:100px;pointer-events:none;box-shadow:0 2px 10px rgba(37,211,102,.4);}
+    /* Botón AR nativo de model-viewer */
+    model-viewer::part(default-ar-button){display:none;}
+    .mv-ar-btn{position:absolute;bottom:14px;right:14px;z-index:20;display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,#00C853,#25D366);color:#fff;border:none;border-radius:100px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;box-shadow:0 4px 18px rgba(37,211,102,.45);transition:transform .2s,box-shadow .2s;}
+    .mv-ar-btn:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(37,211,102,.6);}
+    .mv-ar-btn:active{transform:scale(.96);}
+    /* SECTION LABEL */
+    .section-label{display:inline-flex;align-items:center;gap:8px;font-family:monospace;font-size:10px;letter-spacing:.25em;text-transform:uppercase;color:#FF6920;margin-bottom:16px;}
+    .section-label::before{content:'';display:inline-block;width:20px;height:2px;background:#FF6920;border-radius:2px;}
+    .section-title{font-size:clamp(2rem,6vw,3.5rem);font-weight:800;letter-spacing:-.04em;line-height:1.05;color:#F0F0F6;margin:0;}
+    /* CUBE PLACEHOLDER */
+    .cube-scene{width:60px;height:60px;perspective:200px;}
+    .rotating-cube{width:60px;height:60px;position:relative;transform-style:preserve-3d;animation:rotateCube 7s linear infinite;}
+    @keyframes rotateCube{from{transform:rotateX(-20deg) rotateY(0)}to{transform:rotateX(-20deg) rotateY(360deg)}}
+    .cube-face{position:absolute;width:60px;height:60px;border:1px solid rgba(255,105,32,.25);background:rgba(255,105,32,.03);}
+    .cube-face.front{transform:translateZ(30px)}.cube-face.back{transform:rotateY(180deg) translateZ(30px)}.cube-face.left{transform:rotateY(-90deg) translateZ(30px)}.cube-face.right{transform:rotateY(90deg) translateZ(30px)}.cube-face.top{transform:rotateX(90deg) translateZ(30px)}.cube-face.bottom{transform:rotateX(-90deg) translateZ(30px)}
+    /* SCROLL REVEAL */
+    .scroll-reveal{opacity:0;transform:translateY(35px);transition:opacity .7s ease,transform .7s ease;}
+    .scroll-reveal.is-visible{opacity:1;transform:translateY(0);}
+    /* WA FLOAT */
+    #waFloat{position:fixed;bottom:24px;right:24px;z-index:200;width:58px;height:58px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(37,211,102,.45);text-decoration:none;transition:opacity .5s,transform .5s;opacity:0;transform:translateY(16px) scale(.9);}
+    #waFloat.visible{opacity:1;transform:translateY(0) scale(1);animation:waPulse 2.8s ease-in-out infinite;}
+    #waFloat:hover{transform:scale(1.1);}
+    @keyframes waPulse{0%,100%{box-shadow:0 6px 24px rgba(37,211,102,.45)}50%{box-shadow:0 6px 40px rgba(37,211,102,.7),0 0 0 10px rgba(37,211,102,.08)}}
+    /* SCROLLBAR */
+    ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:#0A0A0C;}::-webkit-scrollbar-thumb{background:#1F1F28;border-radius:3px;}
+    /* SEARCH */
+    .search-input{background:#111116;border:1px solid #1E1E28;border-radius:12px;padding:12px 16px 12px 42px;color:#F0F0F6;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s;width:100%;max-width:300px;}
+    .search-input:focus{border-color:#FF6920;}
+    .search-input::placeholder{color:#4D5070;}
+  </style>
+</head>
+<body class="bg-nx-black">
+
+<!-- NAV -->
+<nav id="mainNav">
+  <a href="index.html" class="nav-logo">
+    <img src="assets/images/logo.png" alt="Logo" class="nav-logo-img" onerror="this.style.display='none'">
+    <span style="white-space:nowrap;">NEXO<span class="text-gradient">MAKER</span>3D</span>
+  </a>
+  <ul class="nav-links">
+    <li><a href="index.html">Inicio</a></li>
+    <li><a href="index.html#filamentos">Filamentos</a></li>
+    <li><a href="index.html#contacto">Contactar</a></li>
+  </ul>
+  <a id="navWa" href="#" target="_blank" rel="noopener" class="btn-primary hidden sm:inline-flex text-sm py-2.5 px-5">Cotizar</a>
+</nav>
+
+<!-- HERO MINI -->
+<section style="padding-top:100px;padding-bottom:48px;background:#000;text-align:center;padding-left:24px;padding-right:24px;">
+  <p style="font-family:monospace;font-size:11px;letter-spacing:.25em;text-transform:uppercase;color:#6B9FD4;margin-bottom:12px;">Portfolio</p>
+  <h1 style="font-size:clamp(2.2rem,8vw,4rem);font-weight:900;letter-spacing:-.04em;line-height:1;">Catálogo Completo</h1>
+  <p style="font-size:17px;color:#8899B4;margin-top:16px;max-width:480px;margin-left:auto;margin-right:auto;line-height:1.6;">Explora todas nuestras piezas. Visualiza los modelos en 3D y elige el color de tu filamento.</p>
+</section>
+
+<!-- MAIN CONTENT -->
+<section style="padding:0 24px 80px;max-width:1200px;margin:0 auto;">
+
+  <!-- Controles: búsqueda + filtros -->
+  <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:32px;">
+    <div style="position:relative;flex:1;min-width:200px;">
+      <i data-lucide="search" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#4A5A72;pointer-events:none;"></i>
+      <input type="text" id="searchInput" class="search-input" placeholder="Buscar pieza..." oninput="filterCatalog()">
+    </div>
+  </div>
+
+  <!-- Tabs de colecciones -->
+  <div id="collectionTabs" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:32px;" role="tablist"></div>
+
+  <!-- Grid -->
+  <div id="catGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+
+  <!-- Vacío -->
+  <div id="emptyMsg" style="display:none;text-align:center;padding:80px 20px;">
+    <i data-lucide="inbox" style="width:56px;height:56px;color:#1A2535;margin-bottom:16px;"></i>
+    <p style="font-size:18px;font-weight:600;color:#4A5A72;">Sin piezas que coincidan</p>
+    <p style="font-size:14px;color:#4A5A72;margin-top:8px;">Prueba con otra búsqueda o colección</p>
+  </div>
+
+</section>
+
+<!-- FOOTER -->
+<footer style="padding:40px 24px;border-top:1px solid #1A2535;background:#060C16;">
+  <div style="max-width:1200px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;">
+    <a href="index.html" class="nav-logo"><span style="white-space:nowrap;">NEXO<span class="text-gradient">MAKER</span>3D</span></a>
+    <div style="display:flex;gap:24px;">
+      <a id="footerIg" href="#" target="_blank" rel="noopener" style="color:#4A5A72;font-size:14px;font-weight:500;text-decoration:none;transition:color .2s;">Instagram</a>
+      <a id="footerTt" href="#" target="_blank" rel="noopener" style="color:#4A5A72;font-size:14px;font-weight:500;text-decoration:none;transition:color .2s;">TikTok</a>
+    </div>
+    <p style="font-size:12px;color:#4A5A72;">© 2025 NEXOMAKER3D</p>
+  </div>
+</footer>
+
+<!-- WA FLOTANTE -->
+<a id="waFloat" href="#" target="_blank" rel="noopener" aria-label="WhatsApp">
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+</a>
+
+<!-- MODAL VISOR 3D -->
+<div id="viewerModal" style="position:fixed;inset:0;background:rgba(0,0,0,.94);backdrop-filter:blur(12px);z-index:600;display:none;flex-direction:column;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1A2535;flex-shrink:0;background:#080D15;">
+    <div>
+      <h2 id="vmTitle" style="font-size:18px;font-weight:700;"></h2>
+      <p  id="vmMeta"  style="font-size:13px;color:#8899B4;margin-top:2px;"></p>
+    </div>
+    <button onclick="closeViewer()" style="background:none;border:none;cursor:pointer;color:#fff;padding:8px;line-height:0;">
+      <i data-lucide="x" style="width:24px;height:24px;"></i>
+    </button>
+  </div>
+  <div style="flex:1;position:relative;min-height:0;background:#000;overflow:hidden;">
+    <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
+    <button id="mvArBtn" class="mv-ar-btn" onclick="launchAR()" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Ver en AR
+    </button>
+    <canvas id="vmCanvas3mf" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
+    <div id="vmImgView" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:#000;">
+      <img id="vmImgEl" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">
+    </div>
+    <div id="vmNoModel" style="display:flex;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;color:#4A5A72;text-align:center;padding:32px;">
+      <i data-lucide="box" style="width:52px;height:52px;margin-bottom:16px;opacity:.4;"></i>
+      <p style="font-size:16px;font-weight:600;color:#8899B4;">Modelo 3D no disponible</p>
+      <p id="vmNoModelMsg" style="font-size:13px;margin-top:8px;max-width:300px;line-height:1.6;">Agrega un archivo desde el panel de administración</p>
+    </div>
+  </div>
+  <div style="padding:14px 20px;border-top:1px solid #1A2535;background:#080D15;flex-shrink:0;">
+    <button id="vmAR" onclick="launchAR()"
+       style="display:none;width:100%;justify-content:center;align-items:center;gap:10px;
+              background:linear-gradient(135deg,#00C853,#25D366);color:#fff;
+              padding:16px;border-radius:14px;font-weight:800;font-size:16px;
+              border:none;cursor:pointer;margin-bottom:12px;box-shadow:0 4px 24px rgba(37,211,102,.4);
+              font-family:inherit;transition:transform .15s,box-shadow .15s;"
+       onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(37,211,102,.6)'"
+       onmouseout="this.style.transform='';this.style.boxShadow='0 4px 24px rgba(37,211,102,.4)'">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Ver en Realidad Aumentada (AR)
+    </button>
+    <!-- Colores identificados en el modelo 3MF — recoloreables por filamento -->
+    <div id="vm3mfSection" style="display:none;margin-bottom:12px;">
+      <p style="font-size:11px;font-weight:600;color:#8899B4;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">
+        Colores del modelo — toca uno para cambiar el filamento
+      </p>
+      <div id="vm3mfSwatches" style="display:flex;flex-wrap:wrap;gap:12px;"></div>
+    </div>
+    <div id="vmColors" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;min-height:20px;"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a id="vmWa" href="#" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;flex:1;justify-content:center;">
+        <i data-lucide="message-circle" style="width:15px;height:15px;"></i> Pedir este modelo
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+  const LS_CFG = 'nx_settings';
+  const LS_FIL = 'nx_filaments';
+  const LS_CAT = 'nx_catalog';
+  const DEF_FIL = [
+    {id:'pla-negro',name:'PLA Negro Mate',hex:'#1a1a1a',rough:0.95,metal:0,opac:1,stock:true},
+    {id:'pla-oro',name:'PLA Seda Oro',hex:'#d4a017',rough:0.15,metal:0.80,opac:1,stock:true},
+    {id:'petg-t',name:'PETG Transparente',hex:'#c8e0f4',rough:0.05,metal:0,opac:0.35,stock:true},
+    {id:'tpu-verde',name:'TPU Flexible Verde',hex:'#2d6040',rough:0.85,metal:0,opac:1,stock:true},
+    {id:'pla-rojo',name:'PLA Rojo Fuego',hex:'#cc2200',rough:0.50,metal:0,opac:1,stock:true},
+    {id:'pla-blanco',name:'PLA Blanco Neutro',hex:'#e8e8e8',rough:0.90,metal:0,opac:1,stock:true},
+    {id:'pla-azul',name:'PLA Azul Océano',hex:'#1565C0',rough:0.60,metal:0,opac:1,stock:true},
+    {id:'pla-plata',name:'PLA Seda Plateado',hex:'#C0C0C0',rough:0.10,metal:0.90,opac:1,stock:true},
+    {id:'petg-n',name:'PETG Negro Resistente',hex:'#0D0D0D',rough:0.60,metal:0,opac:1,stock:true},
+    {id:'tpu-nar',name:'TPU Naranja Flex',hex:'#E65100',rough:0.80,metal:0,opac:1,stock:true},
+    {id:'pla-verde',name:'PLA Verde Bosque',hex:'#2E7D32',rough:0.70,metal:0,opac:1,stock:false},
+    {id:'pla-amar',name:'PLA Amarillo Solar',hex:'#F9A825',rough:0.55,metal:0,opac:1,stock:true},
+  ];
+
+  const lsGet = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
+  const getCfg  = () => ({ wa:'528297996751', ig:'https://instagram.com/nexomaker3d', tt:'https://tiktok.com/@nexomaker3d', waMsg:'¡Hola NEXOMAKER3D! Quiero cotizar un proyecto.', waPieza:'¡Hola NEXOMAKER3D! Me interesa la pieza "{nombre}". ¿Pueden cotizarla?', ...lsGet(LS_CFG,{}) });
+  const getFils = () => lsGet(LS_FIL,null)||DEF_FIL;
+  const getCats = () => lsGet(LS_CAT,[])||[];
+  const isDarkHex = hex => { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return(r*299+g*587+b*114)/1000<80; };
+
+  // State
+  let activeCollection = 'all';
+  let searchTerm = '';
+
+  // ─── SETTINGS ───
+  function applySettings() {
+    const cfg = getCfg();
+    const msg = cfg.waMsg || '';
+    const waUrl = `https://wa.me/${cfg.wa}?text=${encodeURIComponent(msg)}`;
+    document.getElementById('navWa').href = waUrl;
+    document.getElementById('waFloat').href = waUrl;
+    if (cfg.ig) document.getElementById('footerIg').href = cfg.ig;
+    if (cfg.tt) document.getElementById('footerTt').href = cfg.tt;
+  }
+
+  // ─── COLLECTION TABS ───
+  function buildTabs() {
+    const items = getCats().filter(x => x.vis !== false);
+    const collections = ['all', ...new Set(items.map(x => x.collection || 'General'))];
+    const tabs = document.getElementById('collectionTabs');
+    tabs.innerHTML = collections.map(c => `
+      <button class="pill${c==='all'?' active':''}" onclick="setCollection('${c}')" data-col="${c}">
+        ${c === 'all' ? 'Todas las piezas' : c}
+        <span style="margin-left:6px;font-size:11px;opacity:.6;">${c==='all'?items.length:items.filter(x=>(x.collection||'General')===c).length}</span>
+      </button>`).join('');
+  }
+
+  function setCollection(col) {
+    activeCollection = col;
+    document.querySelectorAll('#collectionTabs .pill').forEach(p => {
+      p.classList.toggle('active', p.dataset.col === col);
+    });
+    renderGrid();
+  }
+
+  // ─── SEARCH ───
+  function filterCatalog() {
+    searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    renderGrid();
+  }
+
+  // ─── RENDER GRID ───
+  function renderGrid() {
+    let items = getCats().filter(x => x.vis !== false);
+
+    if (activeCollection !== 'all') {
+      items = items.filter(x => (x.collection || 'General') === activeCollection);
+    }
+    if (searchTerm) {
+      items = items.filter(x =>
+        x.name.toLowerCase().includes(searchTerm) ||
+        (x.desc||'').toLowerCase().includes(searchTerm) ||
+        (x.mat||'').toLowerCase().includes(searchTerm)
+      );
+    }
+
+    const grid  = document.getElementById('catGrid');
+    const empty = document.getElementById('emptyMsg');
+
+    if (!items.length) {
+      grid.innerHTML = '';
+      empty.style.display = 'block';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+      return;
+    }
+    empty.style.display = 'none';
+
+    grid.innerHTML = items.map((item, i) => {
+      const delay = ['0s','0.05s','0.1s','0.15s','0.2s','0.25s'][i % 6];
+      const _ext = (item.glbType || item.glbName || '').toLowerCase();
+      const hasGlb = item.glb && !_ext.includes('3mf');
+      return `
+        <article class="catalog-card scroll-reveal" style="transition-delay:${delay};cursor:pointer;" onclick="openViewer('${item.id}')">
+          <div class="card-media">
+            ${hasGlb ? `<span class="ar-badge">AR</span>` : ''}
+            ${item.img ? `
+            <img src="${item.img}" alt="${item.name}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;" loading="lazy">` : `
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F0F14;z-index:1;">
+              <div class="cube-scene"><div class="rotating-cube" style="animation-delay:-${(i%7)*1.2}s;">
+                ${['front','back','left','right','top','bottom'].map(f=>`<div class="cube-face ${f}"></div>`).join('')}
+              </div></div>
+              <p style="margin-top:14px;font-size:10px;font-family:monospace;color:#4D5070;letter-spacing:.15em;">${(item.cat||'modelo').toUpperCase()}</p>
+            </div>`}
+            <div class="card-overlay">
+              <div class="card-overlay-btns">
+                <button class="btn-view3d" onclick="event.stopPropagation();openViewer('${item.id}')">
+                  <i data-lucide="box" style="width:12px;height:12px;flex-shrink:0;"></i> Ver 3D
+                </button>
+                ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();openViewerForAR('${item.id}')">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AR
+                </button>` : ''}
+              </div>
+            </div>
+          </div>
+          <div style="padding:18px 20px 20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:8px;">
+              <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.name}</h3>
+              ${item.featured?'<span style="font-size:10px;background:rgba(255,176,32,.1);color:#FFB020;border:1px solid rgba(255,176,32,.2);border-radius:100px;padding:2px 8px;flex-shrink:0;">★</span>':''}
+            </div>
+            <p style="font-size:12px;color:#4D5070;margin-bottom:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.desc||''}</p>
+            ${item.mat ? `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#2A2A38;">Mat.</span><span style="font-size:13px;font-weight:600;color:#8090B0;">${item.mat}</span></div>` : ''}
+          </div>
+        </article>`;
+    }).join('');
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    document.querySelectorAll('.scroll-reveal:not(.is-visible)').forEach(el => {
+      if (window._ro) window._ro.observe(el);
+    });
+    _resolveCardViewers(items);
+  }
+
+  // Resuelve IDB → blob URL para model-viewers (GLB) y canvas (3MF) de las tarjetas
+  async function _resolveCardViewers(items) {
+    for (const item of items) {
+      if (!item.glb) continue;
+      // ── GLB: inyectar src en model-viewer si venía de IDB ──
+      if (item.glbType !== '3mf' && item.glb.startsWith('idb:')) {
+        const mv = document.getElementById('card-mv-' + item.id);
+        if (!mv) continue;
+        try {
+          const buf = await nxCatIdbGet(item.glb.slice(4));
+          if (buf) mv.src = URL.createObjectURL(new Blob([buf], {type:'model/gltf-binary'}));
+        } catch(e) {}
+      }
+      // ── 3MF: cargar en canvas con mini-renderer Three.js ──
+      if (item.glbType === '3mf') {
+        const canvas = document.getElementById('card-3mf-' + item.id);
+        if (!canvas || !window.NX_3MF) continue;
+        let url = item.glb;
+        if (url.startsWith('idb:')) {
+          try {
+            const buf = await nxCatIdbGet(url.slice(4));
+            if (!buf) continue;
+            url = URL.createObjectURL(new Blob([buf], {type:'model/3mf'}));
+          } catch(e) { continue; }
+        }
+        window.NX_3MF.loadCard(url, canvas).catch(()=>{});
+      }
+    }
+  }
+
+  // Dispara AR desde la tarjeta; si no disponible abre el visor modal
+  function _cardAR(itemId) {
+    const mv = document.getElementById('card-mv-' + itemId);
+    if (mv && typeof mv.activateAR === 'function') {
+      try { mv.activateAR(); return; } catch(e) {}
+    }
+    openViewer(itemId);
+  }
+
+  // ─── IDB helper ───
+  function nxCatIdbGet(key) {
+    return new Promise((res,rej)=>{
+      const req=indexedDB.open('nexomaker3d',1);
+      req.onupgradeneeded=e=>e.target.result.createObjectStore('models');
+      req.onsuccess=e=>{const tx=e.target.result.transaction('models','readonly');const r=tx.objectStore('models').get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);};
+      req.onerror=()=>rej(req.error);
+    });
+  }
+
+  // ─── VIEWER ───
+  async function openViewer(itemId) {
+    const item = getCats().find(x => x.id === itemId);
+    if (!item) return;
+    const filaments = getFils();
+    const cfg       = getCfg();
+
+    document.getElementById('vmTitle').textContent = item.name;
+    document.getElementById('vmMeta').textContent  = item.mat || '';
+
+    const viewer    = document.getElementById('vmViewer');
+    const canvas3mf = document.getElementById('vmCanvas3mf');
+    const noModel   = document.getElementById('vmNoModel');
+    const arBtn     = document.getElementById('vmAR');
+
+    // Resolver URL
+    let modelUrl = item.glb || '';
+    let glbType  = item.glbType || (modelUrl.toLowerCase().endsWith('.3mf') ? '3mf' : 'glb');
+    if (modelUrl.startsWith('idb:')) {
+      try {
+        const buf = await nxCatIdbGet(modelUrl.slice(4));
+        if (!buf) throw new Error('no en IDB');
+        modelUrl = URL.createObjectURL(new Blob([buf], { type: glbType==='3mf'?'model/3mf':'model/gltf-binary' }));
+      } catch(e) { modelUrl = ''; }
+    } else if (modelUrl && !modelUrl.startsWith('http') && !modelUrl.startsWith('blob:') && !modelUrl.startsWith('data:')) {
+      modelUrl = modelUrl.split('/').map(s=>encodeURIComponent(s)).join('/');
+    }
+
+    const imgView = document.getElementById('vmImgView');
+    const imgEl   = document.getElementById('vmImgEl');
+
+    // Abrir el modal ANTES de cargar el 3MF: el canvas necesita dimensiones reales
+    document.getElementById('viewerModal').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+
+    viewer.style.display='none'; canvas3mf.style.display='none';
+    noModel.style.display='none'; imgView.style.display='none'; arBtn.style.display='none';
+    const mvArBtn = document.getElementById('mvArBtn');
+    if (mvArBtn) mvArBtn.style.display='none';
+    const vm3mfSection = document.getElementById('vm3mfSection');
+    if (vm3mfSection) { vm3mfSection.style.display='none'; document.getElementById('vm3mfSwatches').innerHTML=''; }
+    if (window.NX_3MF) window.NX_3MF.dispose();
+
+    const imgSrc = item.img || '';
+    if (imgSrc && viewer) viewer.setAttribute('poster', imgSrc);
+
+    if (!modelUrl) {
+      if (imgSrc) { imgEl.src=imgSrc; imgView.style.display='flex'; }
+      else { noModel.style.display='flex'; document.getElementById('vmNoModelMsg').textContent = item.glb?'No se pudo cargar el archivo.':'Agrega un modelo desde el admin.'; }
+    } else if (glbType === '3mf') {
+      canvas3mf.style.display='block';
+      try {
+        const modelColors = await window.NX_3MF.load(modelUrl, canvas3mf);
+        _render3mfColorSwatches(modelColors || []);
+      }
+      catch(e) {
+        canvas3mf.style.display='none';
+        if (imgSrc) { imgEl.src=imgSrc; imgView.style.display='flex'; }
+        else { noModel.style.display='flex'; document.getElementById('vmNoModelMsg').textContent='No se pudo cargar el 3MF.'; }
+      }
+    } else {
+      viewer.style.display='block';
+      viewer.removeAttribute('src');
+      setTimeout(()=>{ viewer.setAttribute('src', modelUrl); }, 50);
+      arBtn.style.display='flex';
+      // Mostrar botón AR flotante dentro del visor al cargar
+      const mvArBtn = document.getElementById('mvArBtn');
+      if (mvArBtn) {
+        mvArBtn.style.display='none';
+        viewer.addEventListener('load', () => { mvArBtn.style.display='flex'; }, { once:true });
+      }
+    }
+
+    const colorIds = item.colorIds || [];
+    const vmColors = document.getElementById('vmColors');
+    // Si el 3MF expuso sus colores por partes, ese selector reemplaza al global
+    if (vm3mfSection && vm3mfSection.style.display === 'block') {
+      vmColors.style.display='none'; vmColors.innerHTML='';
+    } else if (colorIds.length > 0) {
+      vmColors.style.display='flex';
+      const avail = filaments.filter(f => colorIds.includes(f.id));
+      vmColors.innerHTML = avail.map(f => {
+        const dark = isDarkHex(f.hex);
+        return `<button title="${f.name}"
+          onclick="applyColorToViewer('${f.hex}','${f.rough||0.7}','${f.metal||0}',this)"
+          style="width:36px;height:36px;border-radius:50%;background:${f.hex};border:2px solid ${dark?'rgba(255,255,255,.25)':'rgba(255,255,255,.12)'};cursor:pointer;transition:transform .15s,outline .15s;outline:2px solid transparent;outline-offset:3px;"
+          onmouseover="this.style.transform='scale(1.18)'"
+          onmouseout="this.style.transform='scale(1)'">
+        </button>`;
+      }).join('');
+    } else {
+      vmColors.style.display='flex';
+      vmColors.innerHTML = '<p style="font-size:13px;color:#4A5A72;">Sin colores registrados para esta pieza.</p>';
+    }
+
+    const msg = (cfg.waPieza||'¡Hola NEXOMAKER3D! Me interesa la pieza "{nombre}".').replace('{nombre}', item.name);
+    document.getElementById('vmWa').href = `https://wa.me/${cfg.wa}?text=${encodeURIComponent(msg)}`;
+  }
+
+  function launchAR() {
+    const viewer = document.getElementById('vmViewer');
+    if (viewer && viewer.style.display !== 'none') {
+      try { viewer.activateAR(); return; } catch(e) {}
+    }
+  }
+
+  async function openViewerForAR(itemId) {
+    await openViewer(itemId);
+    const viewer = document.getElementById('vmViewer');
+    if (!viewer || viewer.style.display === 'none') return;
+    const tryAR = () => { try { viewer.activateAR(); } catch(e) {} };
+    // Si ya está cargado lo dispara de inmediato; si no, espera el evento load
+    if (viewer.loaded) tryAR();
+    else viewer.addEventListener('load', tryAR, { once: true });
+  }
+
+  function closeViewer() {
+    document.getElementById('viewerModal').style.display = 'none';
+    document.body.style.overflow = '';
+    document.getElementById('vmViewer').removeAttribute('src');
+    const mvArBtn = document.getElementById('mvArBtn');
+    if (mvArBtn) mvArBtn.style.display='none';
+    const pk = document.getElementById('_3mfPicker'); if (pk) pk.remove();
+    if (window.NX_3MF) window.NX_3MF.dispose();
+  }
+
+  // Renderiza un swatch por cada color detectado en el modelo 3MF
+  function _render3mfColorSwatches(colors) {
+    const section   = document.getElementById('vm3mfSection');
+    const container = document.getElementById('vm3mfSwatches');
+    if (!section || !container) return;
+    if (!colors || !colors.length) { section.style.display='none'; return; }
+    container.innerHTML = colors.map((hex, i) => {
+      const dark = isDarkHex(hex);
+      return `<div style="display:inline-flex;flex-direction:column;align-items:center;gap:3px;">
+        <button data-model-hex="${hex}" onclick="_show3mfPicker('${hex}',this)"
+          title="Color ${i+1} — toca para cambiar el filamento"
+          style="width:40px;height:40px;border-radius:10px;background:${hex};border:2px solid ${dark?'rgba(255,255,255,.3)':'rgba(0,0,0,.25)'};cursor:pointer;transition:transform .15s;"
+          onmouseover="this.style.transform='scale(1.12)'" onmouseout="this.style.transform='scale(1)'"></button>
+        <span style="font-size:10px;color:#4A5A72;">Parte ${i+1}</span>
+      </div>`;
+    }).join('');
+    section.style.display='block';
+  }
+
+  // Popover flotante con los filamentos disponibles para repintar una parte
+  function _show3mfPicker(originalHex, btn) {
+    const prev = document.getElementById('_3mfPicker');
+    if (prev) { const same = prev._srcHex === originalHex; prev.remove(); if (same) return; }
+    const filaments = getFils();
+    if (!filaments.length) return;
+    const rect = btn.getBoundingClientRect();
+    const picker = document.createElement('div');
+    picker.id = '_3mfPicker';
+    picker._srcHex = originalHex;
+    picker.style.cssText = `position:fixed;top:${rect.bottom + 8}px;left:${Math.max(8, Math.min(rect.left - 60, window.innerWidth - 280))}px;background:#0D1520;border:1px solid #1A2535;border-radius:12px;padding:12px;display:flex;flex-wrap:wrap;gap:8px;max-width:260px;z-index:700;box-shadow:0 8px 32px rgba(0,0,0,.7);`;
+    filaments.forEach(f => {
+      const dark = isDarkHex(f.hex);
+      const b = document.createElement('button');
+      b.title = f.name;
+      b.style.cssText = `width:36px;height:36px;border-radius:8px;background:${f.hex};border:2px solid ${dark?'rgba(255,255,255,.25)':'rgba(0,0,0,.2)'};cursor:pointer;transition:transform .12s;`;
+      b.onmouseover = () => b.style.transform = 'scale(1.15)';
+      b.onmouseout  = () => b.style.transform = 'scale(1)';
+      b.onclick = () => {
+        window.NX_3MF.recolorPart(originalHex, f.hex, f.rough||0.7, f.metal||0);
+        btn.style.background = f.hex;
+        btn.dataset.modelHex = f.hex;
+        btn.style.borderColor = isDarkHex(f.hex) ? 'rgba(255,255,255,.3)' : 'rgba(0,0,0,.25)';
+        btn.setAttribute('onclick', `_show3mfPicker('${f.hex}',this)`);
+        picker.remove();
+        document.removeEventListener('click', closePicker, true);
+      };
+      picker.appendChild(b);
+    });
+    const closePicker = e => {
+      if (!picker.contains(e.target) && e.target !== btn) {
+        picker.remove(); document.removeEventListener('click', closePicker, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closePicker, true), 0);
+    document.body.appendChild(picker);
+  }
+
+  function applyColorToViewer(hex, rough, metal, btn) {
+    const viewer = document.getElementById('vmViewer');
+    if (!viewer) return;
+    document.querySelectorAll('#vmColors button').forEach(b => b.style.outline = '2px solid transparent');
+    if (btn) btn.style.outline = '2px solid #6B9FD4';
+    const apply = () => {
+      if (!viewer.model) return;
+      const r=parseInt(hex.slice(1,3),16)/255, g=parseInt(hex.slice(3,5),16)/255, b=parseInt(hex.slice(5,7),16)/255;
+      viewer.model.materials.forEach(mat => {
+        mat.pbrMetallicRoughness.setBaseColorFactor([r,g,b,1]);
+        if (mat.pbrMetallicRoughness.roughnessFactor !== undefined) mat.pbrMetallicRoughness.roughnessFactor = parseFloat(rough);
+        if (mat.pbrMetallicRoughness.metallicFactor  !== undefined) mat.pbrMetallicRoughness.metallicFactor  = parseFloat(metal);
+      });
+    };
+    viewer.model ? apply() : viewer.addEventListener('load', apply, {once:true});
+  }
+
+  // ─── SCROLL REVEAL ───
+  function initReveal() {
+    window._ro = new IntersectionObserver(entries => {
+      entries.forEach(e => { if(e.isIntersecting){e.target.classList.add('is-visible');window._ro.unobserve(e.target);} });
+    }, { threshold:0.12, rootMargin:'0px 0px -30px 0px' });
+    document.querySelectorAll('.scroll-reveal').forEach(el => window._ro.observe(el));
+  }
+
+  // ─── NAV SCROLL ───
+  window.addEventListener('scroll', () => {
+    document.getElementById('mainNav').classList.toggle('scrolled', window.scrollY > 60);
+  }, { passive:true });
+
+  // ─── KEYBOARD ───
+  document.addEventListener('keydown', e => { if(e.key==='Escape') closeViewer(); });
+
+  // ─── STORAGE EVENTS ───
+  window.addEventListener('storage', e => {
+    if (e.key === LS_CFG || e.key === LS_CAT || e.key === LS_FIL) {
+      applySettings(); buildTabs(); renderGrid();
+    }
+  });
+
+  // ─── INIT ───
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    applySettings();
+    buildTabs();
+    renderGrid();
+    initReveal();
+    setTimeout(() => {
+      document.getElementById('waFloat').classList.add('visible');
+    }, 600);
+  });
+</script>
+</body>
+</html>

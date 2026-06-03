@@ -1,0 +1,3040 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Impresión 3D premium. Prototipos, piezas personalizadas y más. NEXOMAKER3D — Tus ideas cobran forma, una capa a la vez.">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="NEXOMAKER3D — Impresión 3D Premium">
+  <meta property="og:description" content="Tus ideas cobran forma, una capa a la vez. Prototipos, piezas personalizadas y decoración.">
+  <meta property="og:image" content="assets/images/og-preview.jpg">
+
+  <title>NEXOMAKER3D — Tus ideas cobran forma, una capa a la vez</title>
+
+  <!-- Schema.org -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    "name": "NEXOMAKER3D",
+    "description": "Servicio de impresión 3D premium. Prototipos, piezas funcionales y decorativas.",
+    "url": "https://nexomaker3d.com",
+    "slogan": "Tus ideas cobran forma, una capa a la vez."
+  }
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- model-viewer para AR y modelos 3D -->
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <!-- Three.js para el visor de filamentos (módulo ES con GLTFLoader) -->
+  <script type="importmap">
+  {"imports":{"three":"https://unpkg.com/three@0.152.2/build/three.module.min.js","three/addons/":"https://unpkg.com/three@0.152.2/examples/jsm/"}}
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
+    import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const _loader    = new GLTFLoader();
+    // 3MFLoader como import estático: se carga junto al módulo, no como singleton diferido
+    const _3mfLoader = new ThreeMFLoader();
+
+    // Visor Three.js para archivos 3MF (colores originales multicolor)
+    window.NX_3MF = {
+      renderer:null, scene:null, camera:null, controls:null, animId:null,
+      _colorMap:{},
+      rimLight:null, rimLight2:null,   // doble contorno adaptativo
+
+      async load(url, canvas) {
+        this.dispose();
+
+        // Esperar 2 frames para que el canvas tenga dimensiones reales tras hacerse visible
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        const W = Math.max(canvas.clientWidth  || canvas.offsetWidth  || window.innerWidth,  1);
+        const H = Math.max(canvas.clientHeight || canvas.offsetHeight || window.innerHeight, 1);
+
+        this.renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.setSize(W, H, false);
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.scene  = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x0D1520); // oscuro por defecto, se adapta al cargar
+        this.camera = new THREE.PerspectiveCamera(45, W/H, 0.001, 1000);
+        this.controls = new OrbitControls(this.camera, canvas);
+        this.controls.enableDamping = true; this.controls.dampingFactor = 0.07;
+        this.controls.autoRotate = true; this.controls.autoRotateSpeed = 0.8;
+        this.controls.enablePan = false;
+        this.controls.maxPolarAngle = Math.PI * 0.88;
+
+        // Iluminación calibrada (igual que NX_VIEWER)
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.50));
+        const fill = new THREE.DirectionalLight(0xffffff, 0.30); fill.position.set(-4,-2,-4); this.scene.add(fill);
+        const key  = new THREE.DirectionalLight(0xffffff, 0.55); key.position.set(5, 8, 5);  this.scene.add(key);
+        // Rim lights duales: contornos desde atrás para hacer visibles los detalles en colores oscuros
+        this.rimLight  = new THREE.DirectionalLight(0xffffff, 0.15); this.rimLight.position.set( 2, 3, -4); this.scene.add(this.rimLight);
+        this.rimLight2 = new THREE.DirectionalLight(0xffffff, 0.15); this.rimLight2.position.set(-2, 2, -5); this.scene.add(this.rimLight2);
+
+        const group = await new Promise((res,rej) => _3mfLoader.load(url, res, undefined, rej));
+
+        // DoubleSide + vertex colors en todos los meshes
+        group.traverse(c => {
+          if (!c.isMesh) return;
+          const mats = Array.isArray(c.material) ? c.material : [c.material];
+          mats.forEach(m => {
+            m.side = THREE.DoubleSide;
+            if (c.geometry.attributes.color) { m.vertexColors = true; m.needsUpdate = true; }
+          });
+        });
+
+        // Corrección de orientación: 3MF exportado desde slicers usa Z-up → Three.js usa Y-up
+        group.rotation.x = -Math.PI / 2;
+        group.updateMatrixWorld(true);
+
+        // Centrar y normalizar escala sobre el grupo ya orientado
+        const bbox   = new THREE.Box3().setFromObject(group);
+        const center = bbox.getCenter(new THREE.Vector3());
+        const size   = bbox.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const sc     = 2.0 / maxDim;
+        group.position.set(-center.x, -center.y, -center.z);
+        const pivot = new THREE.Group();
+        pivot.scale.setScalar(sc);
+        pivot.add(group);
+        this.scene.add(pivot);
+
+        // Cámara: frente al modelo, ligeramente elevada (igual que NX_VIEWER)
+        const camDist = 2.0 * 2.6;
+        this.camera.position.set(0, 2.0 * 0.15, camDist);
+        this.camera.lookAt(0, 0, 0);
+        this.controls.target.set(0, 0, 0);
+        this.controls.minDistance = 0.5;
+        this.controls.maxDistance = 2.0 * 12;
+        this.camera.near = 0.01; this.camera.far = 500;
+        this.camera.updateProjectionMatrix();
+        this.controls.update();
+
+        const tick = () => {
+          this.animId = requestAnimationFrame(tick);
+          this.controls.update();
+          this.renderer.render(this.scene, this.camera);
+        };
+        tick();
+
+        // Mapa de colores + fondo adaptativo basado en luminancia promedio
+        const colors = this._buildColorMap(pivot);
+        this._updateBg(colors);
+        return colors;
+      },
+
+      // Fondo + doble rim light adaptativos según luminancia promedio de los materiales
+      _updateBg(hexColors) {
+        if (!hexColors || !hexColors.length || !this.scene) return;
+        let lum = 0;
+        hexColors.forEach(hex => {
+          const r = parseInt(hex.slice(1,3),16)/255;
+          const g = parseInt(hex.slice(3,5),16)/255;
+          const b = parseInt(hex.slice(5,7),16)/255;
+          lum += 0.2126*r + 0.7152*g + 0.0722*b;
+        });
+        const avg = lum / hexColors.length;
+        // Fondo: más claro para mayor contraste con colores muy oscuros
+        this.scene.background = new THREE.Color(avg < 0.04 ? 0x3a4d5e : avg < 0.12 ? 0x2c3d52 : 0x0D1520);
+        // Doble rim light: se intensifica agresivamente para modelos oscuros
+        if (this.rimLight)  this.rimLight.intensity  = avg < 0.04 ? 1.8 : avg < 0.12 ? 0.7 : 0.15;
+        if (this.rimLight2) this.rimLight2.intensity = avg < 0.04 ? 0.9 : avg < 0.12 ? 0.3 : 0.08;
+      },
+
+      // Agrupa meshes por color — usa clustering de vertex colors o el color del material
+      _buildColorMap(root) {
+        this._colorMap = {};
+        root.traverse(c => {
+          if (!c.isMesh) return;
+          const mats = Array.isArray(c.material) ? c.material : [c.material];
+          if (c.geometry && c.geometry.attributes.color && mats.some(m => m && m.vertexColors)) {
+            // Vertex colors: detectar colores distintos por frecuencia en el buffer
+            const hexList = this._clusterVertexColors(c.geometry.attributes.color);
+            hexList.forEach(hex => {
+              if (!this._colorMap[hex]) this._colorMap[hex] = [];
+              if (!this._colorMap[hex].includes(c)) this._colorMap[hex].push(c);
+            });
+          } else {
+            mats.forEach(m => {
+              if (!m || !m.color) return;
+              const hex = '#' + m.color.getHexString();
+              if (!this._colorMap[hex]) this._colorMap[hex] = [];
+              if (!this._colorMap[hex].includes(c)) this._colorMap[hex].push(c);
+            });
+          }
+        });
+        return Object.keys(this._colorMap);
+      },
+
+      // Detecta los top-8 colores más frecuentes en el buffer de vértices (lineal → sRGB)
+      _clusterVertexColors(attr) {
+        const freq = {};
+        const step = Math.max(1, Math.floor(attr.count / 500));
+        // Convertir linear → sRGB aproximado (gamma 2.2) para display
+        const s = v => Math.min(255, Math.round(Math.pow(Math.max(0,v), 1/2.2)*255)).toString(16).padStart(2,'0');
+        for (let i=0; i<attr.count; i+=step) {
+          // Cuantizar a 16 niveles para agrupar colores casi-idénticos
+          const r=Math.round(attr.getX(i)*16)/16, g=Math.round(attr.getY(i)*16)/16, b=Math.round(attr.getZ(i)*16)/16;
+          const hex='#'+s(r)+s(g)+s(b);
+          freq[hex]=(freq[hex]||0)+1;
+        }
+        const result = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([h])=>h);
+        return result.length ? result : ['#ffffff'];
+      },
+
+      // Carga el 3MF en el canvas de una tarjeta (vista previa ligera, sin controles)
+      async loadCard(url, canvas) {
+        // Esperar 2 frames para que el DOM haya calculado las dimensiones del canvas
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const W = Math.max(canvas.clientWidth||canvas.offsetWidth||300, 1);
+        const H = Math.max(canvas.clientHeight||canvas.offsetHeight||280, 1);
+        // alpha:true → fondo transparente, la imagen de la tarjeta se ve detrás del modelo
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias:false, alpha:true });
+        renderer.setPixelRatio(1);
+        renderer.setSize(W, H);   // sin false → el renderer fija el tamaño CSS del canvas
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        const scene = new THREE.Scene();
+        // Sin scene.background → fondo transparente
+        const camera = new THREE.PerspectiveCamera(45, W/H, 0.01, 500);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.90));
+        const kl = new THREE.DirectionalLight(0xffffff, 0.60); kl.position.set(3,5,3); scene.add(kl);
+        const rl = new THREE.DirectionalLight(0xffffff, 0.30); rl.position.set(-2,2,-4); scene.add(rl);
+        try {
+          const group = await new Promise((res,rej) => _3mfLoader.load(url, res, undefined, rej));
+          group.traverse(c => {
+            if (!c.isMesh) return;
+            const mats = Array.isArray(c.material)?c.material:[c.material];
+            mats.forEach(m => { m.side=THREE.DoubleSide; if(c.geometry.attributes.color){m.vertexColors=true;m.needsUpdate=true;} });
+          });
+          group.rotation.x = -Math.PI/2; group.updateMatrixWorld(true);
+          const bbox=new THREE.Box3().setFromObject(group);
+          const ctr=bbox.getCenter(new THREE.Vector3()), sz=bbox.getSize(new THREE.Vector3());
+          const sc=2.0/(Math.max(sz.x,sz.y,sz.z)||1);
+          group.position.set(-ctr.x,-ctr.y,-ctr.z);
+          const pivot=new THREE.Group(); pivot.scale.setScalar(sc); pivot.add(group); scene.add(pivot);
+          camera.position.set(0, 0.3, 5.2); camera.lookAt(0,0,0);
+          let animId;
+          const tick=()=>{ animId=requestAnimationFrame(tick); pivot.rotation.y+=0.006; renderer.render(scene,camera); };
+          tick();
+          // Ajustar si el contenedor cambia de tamaño
+          const ro=new ResizeObserver(()=>{
+            const w=Math.max(canvas.clientWidth||300,1), h=Math.max(canvas.clientHeight||280,1);
+            renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+          });
+          ro.observe(canvas);
+          canvas._nxDispose=()=>{ cancelAnimationFrame(animId); renderer.dispose(); ro.disconnect(); };
+        } catch(e) { renderer.dispose(); }
+      },
+
+      // Repinta todas las partes que comparten un color con el filamento elegido
+      recolorPart(originalHex, newHex, roughness = 0.7, metalness = 0) {
+        const meshes = this._colorMap[originalHex];
+        if (!meshes) return;
+        const newColor = new THREE.Color(newHex);
+        meshes.forEach(mesh => {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          mats.forEach(m => {
+            if (!m) return;
+            m.vertexColors = false;
+            m.color.copy(newColor);
+            m.roughness  = parseFloat(roughness);
+            m.metalness  = parseFloat(metalness);
+            m.needsUpdate = true;
+          });
+        });
+        if (newHex !== originalHex) {
+          this._colorMap[newHex] = meshes;
+          delete this._colorMap[originalHex];
+        }
+        // Recalcular fondo con los colores actuales del modelo
+        this._updateBg(Object.keys(this._colorMap));
+      },
+
+      dispose() {
+        if (this.animId) cancelAnimationFrame(this.animId);
+        if (this.renderer) this.renderer.dispose();
+        this.renderer=null; this.scene=null; this.camera=null; this.controls=null; this.animId=null;
+        this.rimLight=null; this.rimLight2=null; this._colorMap={};
+      }
+    };
+
+    // Recupera un ArrayBuffer de IndexedDB (modelos guardados desde el file picker del admin)
+    function _idbGet(key) {
+      return new Promise((res, rej) => {
+        const req = indexedDB.open('nexomaker3d', 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore('models');
+        req.onsuccess = e => {
+          const tx = e.target.result.transaction('models', 'readonly');
+          const r  = tx.objectStore('models').get(key);
+          r.onsuccess = () => res(r.result);
+          r.onerror   = () => rej(r.error);
+        };
+        req.onerror = () => rej(req.error);
+      });
+    }
+
+    window.NX_VIEWER = {
+      scene:null, camera:null, renderer:null, controls:null,
+      dirLight:null, rimLight:null, rimLight2:null, currentRoot:null,
+      _az:0.6, _el:0.75, _int:2.5, _K:6500,
+
+      init() {
+        const canvas = document.getElementById('filamentCanvas');
+        const box    = document.getElementById('filamentDisplay');
+        if (!canvas || !box || this.renderer) return;
+
+        this.renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled   = true;
+        this.renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+        // NoToneMapping = sin remapeo de color → el hex del filamento se ve exactamente igual en pantalla
+        this.renderer.toneMapping         = THREE.NoToneMapping;
+        this.renderer.toneMappingExposure = 1.0;
+        this.renderer.outputColorSpace    = THREE.SRGBColorSpace;
+
+        this.scene  = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x0D1520); // mismo color que el contenedor
+
+        this.camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
+        this.camera.position.set(0, 0.4, 3.2);
+
+        this.controls = new OrbitControls(this.camera, canvas);
+        this.controls.enableDamping   = true;
+        this.controls.dampingFactor   = 0.07;
+        this.controls.autoRotate      = true;
+        this.controls.autoRotateSpeed = 0.8;
+        this.controls.enablePan       = false;   // desactivado: evita que el modelo se vaya de pantalla
+        this.controls.maxPolarAngle   = Math.PI * 0.88;
+
+        // Ambiente suave — ilumina todos los ángulos sin distorsionar el color
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.50));
+
+        // Luz de relleno fija desde atrás/abajo — asegura que el modelo siempre sea visible
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.30);
+        fillLight.position.set(-4, -2, -4);
+        this.scene.add(fillLight);
+
+        // Luz direccional principal — calibrada para fidelidad de color, solo la dirección es ajustable
+        this.dirLight = new THREE.DirectionalLight(0xffffff, 0.55);
+        this.dirLight.castShadow = true;
+        this.dirLight.shadow.mapSize.width  = 2048;
+        this.dirLight.shadow.mapSize.height = 2048;
+        this.dirLight.shadow.bias = -0.001;
+        this.scene.add(this.dirLight);
+        this._applyLight();
+
+        // Rim lights duales: contornos desde atrás, se intensifican en colores oscuros
+        this.rimLight  = new THREE.DirectionalLight(0xffffff, 0.15); this.rimLight.position.set( 2, 3, -4); this.scene.add(this.rimLight);
+        this.rimLight2 = new THREE.DirectionalLight(0xffffff, 0.08); this.rimLight2.position.set(-2, 2, -5); this.scene.add(this.rimLight2);
+
+        const sp = new THREE.Mesh(
+          new THREE.PlaneGeometry(30, 30),
+          new THREE.ShadowMaterial({ opacity:0.2 })
+        );
+        sp.rotation.x = -Math.PI/2; sp.position.y = -1.6; sp.receiveShadow = true;
+        this.scene.add(sp);
+
+        const resize = () => {
+          const W=box.clientWidth, H=box.clientHeight;
+          if(W<1||H<1)return;
+          this.renderer.setSize(W,H);
+          this.camera.aspect=W/H;
+          this.camera.updateProjectionMatrix();
+        };
+        resize();
+        new ResizeObserver(resize).observe(box);
+
+        const tick=()=>{ requestAnimationFrame(tick); this.controls.update(); this.renderer.render(this.scene,this.camera); };
+        tick();
+      },
+
+      _applyLight() {
+        if(!this.dirLight) return;
+        // Solo cambia la DIRECCIÓN — intensidad y color siempre constantes
+        const x=Math.cos(this._el)*Math.cos(this._az),
+              y=Math.sin(this._el),
+              z=Math.cos(this._el)*Math.sin(this._az);
+        this.dirLight.position.set(x*6, y*6, z*6);
+      },
+
+      moveSun(az,el){ this._az=az; this._el=el; this._applyLight(); },
+
+      async loadModel(url) {
+        if(!this.scene) this.init();
+        if(!this.scene) return;
+
+        // ── Resolver URL según su tipo ───────────────────────────────
+        let resolvedUrl = url;
+        if (url && url.startsWith('idb:')) {
+          // Modelo guardado desde el file picker → recuperar de IndexedDB
+          try {
+            const buf = await _idbGet(url.slice(4));
+            if (!buf) throw new Error('no en IDB');
+            resolvedUrl = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }));
+          } catch(e) {
+            const ph2=document.getElementById('filamentPlaceholder');
+            const cv2=document.getElementById('filamentCanvas');
+            if(ph2){ ph2.style.display='flex'; ph2.innerHTML='<p style="font-size:13px;color:#f87171;">Modelo local no encontrado.<br><span style="font-size:11px;color:#4A5A72;">Vuelve a cargarlo desde el admin.</span></p>'; }
+            if(cv2) cv2.style.display='none';
+            return;
+          }
+        } else if (url && !url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+          // Ruta local — codificar espacios y caracteres especiales en cada segmento
+          resolvedUrl = url.split('/').map(seg => encodeURIComponent(seg)).join('/');
+        }
+
+        // Limpiar modelo anterior
+        if(this.currentRoot){ this.scene.remove(this.currentRoot); this.currentRoot=null; }
+
+        const ph=document.getElementById('filamentPlaceholder');
+        const cv=document.getElementById('filamentCanvas');
+        ph.style.display='flex';
+        ph.innerHTML='<div class="nx-spin"></div><p style="margin-top:12px;font-size:13px;color:#4A5A72;">Cargando modelo...</p>';
+
+        try {
+          const gltf = await new Promise((res,rej)=>_loader.load(resolvedUrl,res,undefined,rej));
+          const mdl  = gltf.scene;
+
+          // ── PIVOT GROUP — eje de órbita = centro exacto de las mallas ──
+          // Calcular bbox SOLO desde mallas reales (ignora cámaras/luces/nodos vacíos del GLTF)
+          const bbox = new THREE.Box3();
+          mdl.traverse(child => {
+            if (child.isMesh && child.geometry) {
+              child.updateWorldMatrix(true, false);
+              child.geometry.computeBoundingBox();
+              const gb = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+              bbox.union(gb);
+            }
+          });
+          if (bbox.isEmpty()) bbox.setFromObject(mdl); // fallback si no hay mallas directas
+
+          const center = bbox.getCenter(new THREE.Vector3());
+          const size   = bbox.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z) || 1;
+          const sc     = 2.0 / maxDim;
+
+          // Pivot en el origen — mover el modelo para que su centro geométrico quede en (0,0,0)
+          const pivot = new THREE.Group();
+          mdl.position.set(-center.x, -center.y, -center.z);
+          pivot.scale.setScalar(sc);
+          pivot.add(mdl);
+
+          // Sombras + DoubleSide en todos los meshes (corrige normales invertidas de modelos 3MF/STL)
+          mdl.traverse(c=>{
+            if(c.isMesh){
+              c.castShadow=true; c.receiveShadow=true;
+              const mats=Array.isArray(c.material)?c.material:[c.material];
+              mats.forEach(m=>{ m.side=THREE.DoubleSide; m.needsUpdate=true; });
+            }
+          });
+
+          this.currentRoot = pivot;
+          this.scene.add(pivot);
+
+          // ── Cámara y controles fijados en el PIVOT (0,0,0) ──────────
+          const normSize = 2.0; // tamaño normalizado tras el scale
+          const camDist  = normSize * 2.6;
+
+          // Target exactamente en el origen del pivot = centro geométrico del modelo
+          this.controls.target.set(0, 0, 0);
+          this.camera.position.set(0, normSize * 0.15, camDist);
+          this.camera.lookAt(0, 0, 0); // orienta la cámara hacia el centro antes de que OrbitControls derive sus coordenadas esféricas
+
+          // Near/far basados en el tamaño normalizado
+          this.camera.near = normSize * 0.005;
+          this.camera.far  = normSize * 300;
+          this.camera.updateProjectionMatrix();
+
+          // Límites de zoom
+          this.controls.minDistance = normSize * 0.25;
+          this.controls.maxDistance = normSize * 12;
+
+          this.controls.update();
+
+          ph.style.display='none';
+          cv.style.display='block';
+
+          // Re-aplicar color de filamento pendiente
+          if(window._pendingFil) this.applyColor(window._pendingFil.hex, window._pendingFil.rough??0.7, window._pendingFil.metal??0);
+
+          // Mostrar botón toggle rotación
+          const tb=document.getElementById('rotateToggle');
+          if(tb){ tb.style.display='flex'; tb.textContent='⏸ Pausar'; }
+
+        } catch(err) {
+          console.error('NX_VIEWER load error:',err);
+          ph.innerHTML=`
+            <svg style="width:40px;height:40px;opacity:.3;margin-bottom:10px;" viewBox="0 0 24 24" fill="none" stroke="#6B9FD4" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            <p style="font-size:13px;color:#f87171;">No se pudo cargar el modelo</p>
+            <p style="font-size:11px;color:#4A5A72;margin-top:6px;max-width:220px;text-align:center;line-height:1.5;">Verifica que la ruta sea correcta y el archivo sea .glb</p>`;
+        }
+      },
+
+      applyColor(hex, roughness, metalness) {
+        if(!this.currentRoot) return;
+        const r=parseInt(hex.slice(1,3),16)/255,
+              g=parseInt(hex.slice(3,5),16)/255,
+              b=parseInt(hex.slice(5,7),16)/255;
+        const col=new THREE.Color(r,g,b);
+        this.currentRoot.traverse(c=>{
+          if(!c.isMesh||!c.material) return;
+          const mats=Array.isArray(c.material)?c.material:[c.material];
+          mats.forEach(m=>{
+            m.color.set(col);
+            if(m.roughness!==undefined) m.roughness = parseFloat(roughness)||0.7;
+            if(m.metalness!==undefined) m.metalness = parseFloat(metalness)||0;
+            m.needsUpdate=true;
+          });
+        });
+        // Doble rim light adaptativo: colores oscuros necesitan contorno para mostrar detalles 3D
+        const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+        if (this.rimLight)  this.rimLight.intensity  = lum < 0.04 ? 1.8 : lum < 0.12 ? 0.7 : 0.15;
+        if (this.rimLight2) this.rimLight2.intensity = lum < 0.04 ? 0.9 : lum < 0.12 ? 0.3 : 0.08;
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => window.NX_VIEWER.init());
+  </script>
+
+  <!-- Tailwind config (ANTES del CDN) -->
+  <script>
+    tailwind = {
+      config: {
+        theme: {
+          extend: {
+            colors: {
+              'nx-black':    '#0A0A0C',
+              'nx-deep':     '#0F0F14',
+              'nx-surface':  '#141419',
+              'nx-border':   '#1F1F28',
+              'nx-steel':    '#5B9BD5',
+              'nx-steeldark':'#3A6FA3',
+              'nx-gray':     '#8090B0',
+              'nx-muted':    '#4D5070',
+              'nx-orange':   '#FF6920',
+              'nx-amber':    '#FFB020',
+            },
+            fontFamily: {
+              sans: ['"Space Grotesk"', '"Inter"', 'system-ui', 'sans-serif'],
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    /* =============================================
+       RESET Y BASE
+    ============================================= */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { background: #0A0A0C; color: #F0F0F6; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; overflow-x: hidden; }
+
+    /* =============================================
+       GRADIENTE DE TEXTO (logo hero)
+    ============================================= */
+    /* Gradiente animado para texto de marca */
+    .text-gradient {
+      background: linear-gradient(135deg, #FF6920 0%, #FFB020 50%, #FF6920 100%);
+      background-size: 200% 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradientShift 5s ease-in-out infinite;
+    }
+    @keyframes gradientShift {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    /* Gradiente azul para el visor de filamentos */
+    .text-gradient-blue {
+      background: linear-gradient(135deg, #3A6FA3, #5B9BD5);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* =============================================
+       ANIMACIÓN DE ENTRADA (hero fade-in-up)
+    ============================================= */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up {
+      animation: fadeInUp 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* =============================================
+       SCROLL REVEAL (Intersection Observer)
+    ============================================= */
+    .scroll-reveal {
+      opacity: 0;
+      transform: translateY(40px);
+      transition: opacity 0.75s ease, transform 0.75s ease;
+    }
+    .scroll-reveal.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Stagger para tarjetas del catálogo */
+    .catalog-card:nth-child(1) { transition-delay: 0.05s; }
+    .catalog-card:nth-child(2) { transition-delay: 0.10s; }
+    .catalog-card:nth-child(3) { transition-delay: 0.15s; }
+    .catalog-card:nth-child(4) { transition-delay: 0.20s; }
+    .catalog-card:nth-child(5) { transition-delay: 0.25s; }
+    .catalog-card:nth-child(6) { transition-delay: 0.30s; }
+    .catalog-card:nth-child(7) { transition-delay: 0.35s; }
+    .catalog-card:nth-child(8) { transition-delay: 0.40s; }
+    .catalog-card:nth-child(9) { transition-delay: 0.45s; }
+
+    /* =============================================
+       BARRA DE PROGRESO DE SCROLL
+    ============================================= */
+    #scrollProgress {
+      position: fixed;
+      top: 0; left: 0;
+      z-index: 9999;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, #FF6920, #FFB020, #FF6920);
+      background-size: 200% 100%;
+      animation: progressShift 2s linear infinite;
+      transition: width 0.1s linear;
+      pointer-events: none;
+    }
+    @keyframes progressShift {
+      0%   { background-position: 0% 0%; }
+      100% { background-position: 200% 0%; }
+    }
+
+    /* =============================================
+       NAV
+    ============================================= */
+    #mainNav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.4s ease, backdrop-filter 0.4s ease, padding 0.4s ease;
+    }
+    #mainNav.scrolled {
+      background: rgba(10, 10, 12, 0.9);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      padding: 14px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .nav-logo {
+      font-weight: 800;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+      color: #fff;
+      text-decoration: none;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    @media (max-width: 380px) {
+      .nav-logo { font-size: 14px; }
+    }
+    .nav-links {
+      display: flex;
+      gap: 28px;
+      list-style: none;
+      margin: 0; padding: 0;
+    }
+    .nav-links a {
+      color: #7080A0;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+      letter-spacing: 0.01em;
+    }
+    .nav-links a:hover { color: #F0F0F6; }
+    @media (max-width: 640px) { .nav-links { display: none; } }
+
+    /* =============================================
+       HERO
+    ============================================= */
+    #hero {
+      position: relative;
+      min-height: 100vh;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #0A0A0C;
+    }
+    /* Fondo: cuadrícula técnica sutil */
+    .hero-grid-bg {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,105,32,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,105,32,0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at 50% 40%, black 20%, transparent 75%);
+      -webkit-mask-image: radial-gradient(ellipse at 50% 40%, black 20%, transparent 75%);
+    }
+    /* Glow de acento naranja en el centro */
+    .hero-glow {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 55%, rgba(255,105,32,0.08) 0%, rgba(255,176,32,0.04) 35%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-title {
+      font-size: clamp(3.5rem, 15vw, 10rem);
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      line-height: 0.92;
+      margin: 0;
+    }
+    .hero-tagline {
+      font-size: clamp(1rem, 3vw, 1.5rem);
+      font-weight: 300;
+      color: #6070A0;
+      letter-spacing: 0.02em;
+      line-height: 1.6;
+    }
+    .hero-label {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: #FF6920;
+    }
+
+    /* Botón primario — verde WhatsApp (acción de conversión) */
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #25D366;
+      color: #fff;
+      padding: 15px 32px;
+      border-radius: 100px;
+      font-weight: 700;
+      font-size: 15px;
+      text-decoration: none;
+      transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 6px 28px rgba(37,211,102,0.30);
+    }
+    .btn-primary:hover {
+      background: #22BE5D;
+      transform: translateY(-2px);
+      box-shadow: 0 10px 36px rgba(37,211,102,0.45);
+    }
+    /* Botón secundario naranja — acción de catálogo */
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(255,105,32,0.4);
+      color: #FF6920;
+      padding: 14px 32px;
+      border-radius: 100px;
+      font-weight: 600;
+      font-size: 15px;
+      text-decoration: none;
+      transition: border-color 0.2s, background 0.2s, color 0.2s;
+      background: rgba(255,105,32,0.06);
+      cursor: pointer;
+    }
+    .btn-secondary:hover {
+      border-color: #FF6920;
+      background: rgba(255,105,32,0.12);
+      color: #FFB020;
+    }
+    /* Stats bar del hero */
+    .hero-stats {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-top: 36px;
+      padding: 14px 20px;
+      background: rgba(20,20,25,0.8);
+      border: 1px solid rgba(255,105,32,0.15);
+      border-radius: 16px;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+    .hero-stat { text-align: center; padding: 0 20px; }
+    .hero-stat-num {
+      display: block;
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #FF6920;
+      letter-spacing: -0.03em;
+    }
+    .hero-stat-label {
+      display: block;
+      font-size: 10px;
+      color: #4D5070;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+    .hero-stat-div { width: 1px; height: 32px; background: rgba(255,105,32,0.15); }
+
+    /* Scroll indicator */
+    @keyframes scrollBounce {
+      0%, 100% { transform: rotate(45deg) translate(0, 0); opacity: 1; }
+      50%       { transform: rotate(45deg) translate(3px, 3px); opacity: 0.3; }
+    }
+    .scroll-chevron {
+      width: 18px; height: 18px;
+      border-right: 2px solid rgba(255,255,255,0.25);
+      border-bottom: 2px solid rgba(255,255,255,0.25);
+      animation: scrollBounce 1.8s ease-in-out infinite;
+    }
+
+    /* =============================================
+       SECCIÓN HEADER GENÉRICO
+    ============================================= */
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: #FF6920;
+      margin-bottom: 16px;
+    }
+    .section-label::before {
+      content: '';
+      display: inline-block;
+      width: 20px; height: 2px;
+      background: #FF6920;
+      border-radius: 2px;
+    }
+    .section-title {
+      font-size: clamp(2.2rem, 6vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      color: #F0F0F6;
+      margin: 0;
+    }
+    .section-subtitle {
+      font-size: 16px;
+      font-weight: 400;
+      color: #5A6080;
+      margin-top: 16px;
+      line-height: 1.7;
+    }
+
+    /* =============================================
+       CATÁLOGO
+    ============================================= */
+    .catalog-card {
+      background: #111116;
+      border: 1px solid #1E1E28;
+      border-radius: 18px;
+      overflow: hidden;
+      position: relative;
+      transition: transform 0.4s cubic-bezier(0.16,1,0.3,1),
+                  box-shadow 0.4s cubic-bezier(0.16,1,0.3,1),
+                  border-color 0.3s ease;
+      cursor: default;
+    }
+    /* Línea de acento naranja que barre al hover */
+    .catalog-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #FF6920, #FFB020, transparent);
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.5s cubic-bezier(0.16,1,0.3,1);
+      z-index: 10;
+    }
+    .catalog-card:hover::before { transform: scaleX(1); }
+    .catalog-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 28px 72px rgba(0,0,0,0.5),
+                  0 0 0 1px rgba(255,105,32,0.15);
+      border-color: rgba(255,105,32,0.2);
+    }
+    .card-media {
+      position: relative;
+      aspect-ratio: 1;
+      background: #0F0F14;
+      overflow: hidden;
+    }
+    /* Zoom sutil de imagen al hover */
+    .card-media img { transition: transform 0.6s cubic-bezier(0.16,1,0.3,1); }
+    .catalog-card:hover .card-media img { transform: scale(1.06); }
+
+    .card-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 55%, transparent 100%);
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 16px;
+    }
+    .catalog-card:hover .card-overlay { opacity: 1; }
+    @media (hover: none) {
+      .card-overlay { opacity: 1; }
+    }
+    /* Dos botones en el overlay */
+    .card-overlay-btns { display: flex; gap: 8px; }
+    .btn-view3d {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 9px 8px;
+      border-radius: 100px;
+      border: 1px solid rgba(91,155,213,0.5);
+      background: rgba(10,10,12,0.8);
+      color: #5B9BD5;
+      font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: inherit;
+      backdrop-filter: blur(8px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-view3d:hover { background: rgba(91,155,213,0.15); border-color: #5B9BD5; }
+    .btn-ar-card {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 9px 8px;
+      border-radius: 100px;
+      border: 1px solid rgba(37,211,102,0.4);
+      background: rgba(10,10,12,0.8);
+      color: #25D366;
+      font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: inherit;
+      backdrop-filter: blur(8px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-ar-card:hover { background: rgba(37,211,102,0.12); border-color: #25D366; }
+    /* Botón AR genérico (modal viewer) */
+    .btn-ar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 10px 16px;
+      border-radius: 100px;
+      border: 1px solid rgba(91,155,213,0.5);
+      background: rgba(91,155,213,0.1);
+      color: #5B9BD5;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+      font-family: inherit;
+    }
+    .btn-ar:hover { background: rgba(91,155,213,0.2); border-color: #5B9BD5; }
+    .spec-label {
+      display: block;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #4A5A72;
+      margin-bottom: 3px;
+    }
+    .spec-value {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* =============================================
+       CUBO 3D CSS (placeholder model-viewer)
+    ============================================= */
+    .cube-scene {
+      width: 60px; height: 60px;
+      perspective: 200px;
+    }
+    .rotating-cube {
+      width: 60px; height: 60px;
+      position: relative;
+      transform-style: preserve-3d;
+      animation: rotateCube 7s linear infinite;
+    }
+    @keyframes rotateCube {
+      from { transform: rotateX(-20deg) rotateY(0deg); }
+      to   { transform: rotateX(-20deg) rotateY(360deg); }
+    }
+    .cube-face {
+      position: absolute;
+      width: 60px; height: 60px;
+      border: 1px solid rgba(255,105,32,0.25);
+      background: rgba(255,105,32,0.03);
+    }
+    .cube-face.front  { transform: translateZ(30px); }
+    .cube-face.back   { transform: rotateY(180deg) translateZ(30px); }
+    .cube-face.left   { transform: rotateY(-90deg) translateZ(30px); }
+    .cube-face.right  { transform: rotateY(90deg) translateZ(30px); }
+    .cube-face.top    { transform: rotateX(90deg) translateZ(30px); }
+    .cube-face.bottom { transform: rotateX(-90deg) translateZ(30px); }
+
+    /* =============================================
+       FILAMENTOS
+    ============================================= */
+    .filament-display-box {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 28px;
+      overflow: hidden;
+      background: #0D1520;
+      border: 1px solid #1A2535;
+    }
+    .filament-surface,
+    .filament-sheen {
+      position: absolute;
+      inset: 0;
+      transition: opacity 0.35s ease, background 0.01s;
+    }
+    .filament-surface { z-index: 1; }
+    .filament-sheen   { z-index: 2; pointer-events: none; }
+    .filament-info-overlay {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      z-index: 3;
+      padding: 24px;
+      background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 60%, transparent 100%);
+    }
+    .spec-chip {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      padding: 6px 12px;
+    }
+    .spec-chip-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #4A5A72;
+    }
+    .spec-chip-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      margin-top: 2px;
+    }
+    .filament-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 10px;
+      border-radius: 16px;
+      border: 1px solid #1A2535;
+      background: #0D1520;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, transform 0.2s;
+      font-family: inherit;
+    }
+    .filament-btn:hover { border-color: #2c2c2e; transform: translateY(-2px); }
+    .filament-btn.active {
+      border-color: rgba(107,159,212,0.5);
+      background: rgba(107,159,212,0.06);
+    }
+    .filament-swatch {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
+    }
+    .filament-btn-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: #8899B4;
+      text-align: center;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .filament-btn.active .filament-btn-label { color: #fff; }
+    @media (max-width: 400px) {
+      .filament-btn { padding: 10px 6px; gap: 6px; border-radius: 12px; }
+      .filament-swatch { width: 28px; height: 28px; }
+      .filament-btn-label { font-size: 10px; }
+    }
+
+    /* =============================================
+       CONTACTO
+    ============================================= */
+    .contact-glow {
+      position: absolute;
+      width: 700px; height: 700px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,105,32,0.05) 0%, rgba(255,176,32,0.02) 40%, transparent 70%);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    /* Indicador de disponibilidad online */
+    .online-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 13px; color: #4D5070; margin-bottom: 24px;
+    }
+    .online-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #25D366;
+      box-shadow: 0 0 0 3px rgba(37,211,102,0.2);
+      flex-shrink: 0;
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+    @keyframes dotPulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(37,211,102,0.2); }
+      50%       { box-shadow: 0 0 0 6px rgba(37,211,102,0.05); }
+    }
+    .btn-whatsapp {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: #25D366;
+      color: #fff;
+      padding: 16px 36px;
+      border-radius: 100px;
+      font-weight: 700;
+      font-size: 16px;
+      text-decoration: none;
+      transition: opacity 0.2s, transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 8px 32px rgba(37,211,102,0.35);
+    }
+    .btn-whatsapp:hover {
+      opacity: 0.92;
+      transform: scale(1.03);
+      box-shadow: 0 12px 40px rgba(37,211,102,0.5);
+    }
+    .info-card {
+      background: #111116;
+      border: 1px solid #1E1E28;
+      border-radius: 18px;
+      padding: 28px 24px;
+      text-align: center;
+      transition: border-color 0.3s, transform 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Colored top accent per card */
+    .info-card:nth-child(1) { border-top: 2px solid #25D366; }
+    .info-card:nth-child(2) { border-top: 2px solid #FF6920; }
+    .info-card:nth-child(3) { border-top: 2px solid #5B9BD5; }
+    .info-card:nth-child(4) { border-top: 2px solid #FFB020; }
+    .info-card:hover { border-color: #2A2A38; transform: translateY(-4px); }
+
+    /* =============================================
+       FOOTER
+    ============================================= */
+    .social-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #4D5070;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .social-link:hover { color: #FF6920; }
+
+    /* =============================================
+       WHATSAPP FLOTANTE
+    ============================================= */
+    #waFloat {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      z-index: 200;
+      width: 58px; height: 58px;
+      background: #25D366;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 24px rgba(37,211,102,0.45);
+      text-decoration: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      opacity: 0;
+      transform: translateY(16px) scale(0.9);
+    }
+    #waFloat.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    #waFloat:hover { transform: scale(1.1); }
+    @keyframes waPulse {
+      0%, 100% { box-shadow: 0 6px 24px rgba(37,211,102,0.45); }
+      50%       { box-shadow: 0 6px 40px rgba(37,211,102,0.7), 0 0 0 10px rgba(37,211,102,0.08); }
+    }
+    #waFloat.visible { animation: waPulse 2.8s ease-in-out infinite; }
+
+    /* =============================================
+       PILL FILTERS
+    ============================================= */
+    .pill {
+      padding: 8px 20px;
+      border-radius: 100px;
+      border: 1px solid #1A2535;
+      background: transparent;
+      color: #8899B4;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .pill:hover { border-color: #2c2c2e; color: #fff; }
+    .pill.active {
+      background: rgba(107,159,212,0.1);
+      border-color: rgba(107,159,212,0.4);
+      color: #6B9FD4;
+    }
+
+    /* =============================================
+       LOGO
+    ============================================= */
+    .nav-logo-img {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      opacity: 0.92;
+    }
+    .hero-logo-wrap {
+      width: 100px; height: 100px;
+      position: relative;
+    }
+    @media (min-width: 768px) {
+      .hero-logo-wrap { width: 120px; height: 120px; }
+    }
+    .hero-logo-img {
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+      display: block;
+      filter: drop-shadow(0 0 20px rgba(255,105,32,0.30))
+              drop-shadow(0 0 50px rgba(255,176,32,0.12));
+    }
+    /* Anillo de brillo alrededor del logo */
+    .hero-logo-wrap::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: conic-gradient(
+        from 0deg,
+        rgba(255,105,32,0.6),
+        rgba(255,176,32,0.1),
+        rgba(255,105,32,0.6),
+        rgba(255,176,32,0.1),
+        rgba(255,105,32,0.6)
+      );
+      animation: logoRing 6s linear infinite;
+      z-index: -1;
+      mask-image: radial-gradient(closest-side, transparent 95%, black 100%);
+      -webkit-mask-image: radial-gradient(closest-side, transparent 95%, black 100%);
+    }
+    @keyframes logoRing {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* =============================================
+       UTILIDADES
+    ============================================= */
+    .divider {
+      width: 48px; height: 1px;
+      background: linear-gradient(90deg, #6B9FD4, transparent);
+      margin: 20px auto 0;
+    }
+    /* Spinner de carga del visor */
+    @keyframes nx-spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+    .nx-spin {
+      width:32px; height:32px;
+      border:2px solid #1A2535;
+      border-top-color:#6B9FD4;
+      border-radius:50%;
+      animation:nx-spin 1s linear infinite;
+      flex-shrink:0;
+    }
+
+    /* Showcase tabs */
+    .showcase-tab {
+      padding: 7px 14px;
+      border-radius: 100px;
+      border: 1px solid #1A2535;
+      background: transparent;
+      color: #4A5A72;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: inherit;
+    }
+    .showcase-tab:hover { border-color: #2c2c2e; color: #fff; }
+    .showcase-tab.active { background: rgba(107,159,212,.1); border-color: rgba(107,159,212,.4); color: #6B9FD4; }
+
+    /* Lighting buttons */
+    .lighting-btn {
+      padding: 6px 12px;
+      border-radius: 100px;
+      border: 1px solid #1A2535;
+      background: transparent;
+      color: #4A5A72;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: inherit;
+    }
+    .lighting-btn:hover { border-color: #2c2c2e; color: #fff; }
+    .lighting-btn.active { background: rgba(107,159,212,.1); border-color: rgba(107,159,212,.4); color: #6B9FD4; }
+    model-viewer {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      background: transparent;
+      --poster-color: transparent;
+    }
+  </style>
+</head>
+<body class="bg-nx-black text-white font-sans">
+
+  <!-- Barra de progreso de scroll -->
+  <div id="scrollProgress"></div>
+
+  <!-- ============================================================
+       NAVEGACIÓN
+  ============================================================ -->
+  <nav id="mainNav" aria-label="Navegación principal">
+    <a href="#hero" class="nav-logo flex items-center gap-2">
+      <img src="assets/images/logo.png" alt="Logo" class="nav-logo-img">
+      <span style="white-space:nowrap;">NEXO<span class="text-gradient">MAKER</span>3D</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#catalogo">Catálogo</a></li>
+      <li><a href="#cuidado">Materiales</a></li>
+      <li><a href="#filamentos">Filamentos</a></li>
+      <li><a href="#contacto">Contactar</a></li>
+    </ul>
+    <a href="https://wa.me/528297996751?text=%C2%A1Hola%20NEXOMAKER3D!%20Escane%C3%A9%20el%20QR%20de%20mi%20pieza%20y%20me%20encant%C3%B3%20la%20p%C3%A1gina%20web.%20Quiero%20cotizar%20un%20proyecto%20de%20impresi%C3%B3n%203D."
+       target="_blank" rel="noopener"
+       class="btn-primary hidden sm:inline-flex text-sm py-2.5 px-5">
+      Cotizar
+    </a>
+  </nav>
+
+  <!-- ============================================================
+       HERO
+  ============================================================ -->
+  <section id="hero" aria-label="Bienvenida">
+    <div class="hero-grid-bg" id="heroBg"></div>
+    <div class="hero-glow"></div>
+
+    <div class="relative z-10 text-center px-6 max-w-5xl mx-auto" id="heroContent">
+      <!-- Logo circular -->
+      <div class="hero-logo-wrap mx-auto mb-8" id="heroLogo" style="opacity:0;">
+        <img src="assets/images/logo.png" alt="NEXOMAKER3D Logo"
+             class="hero-logo-img" draggable="false">
+      </div>
+      <p class="hero-label mb-5" id="heroLabel" style="opacity:0">Impresión 3D Premium</p>
+      <h1 class="hero-title mb-6" id="heroTitle" style="opacity:0">
+        NEXO<span class="text-gradient">MAKER</span>3D
+      </h1>
+      <p class="hero-tagline max-w-xl mx-auto" id="heroTagline" style="opacity:0">
+        Tus ideas cobran forma,<br>una capa a la vez.
+      </p>
+      <div class="flex flex-wrap gap-4 justify-center mt-10" id="heroCta" style="opacity:0">
+        <a href="https://wa.me/528297996751" target="_blank" rel="noopener" class="btn-primary" id="heroCotizar">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+          Cotizar por WhatsApp
+        </a>
+        <a href="#catalogo" class="btn-secondary">
+          <i data-lucide="layers" style="width:15px;height:15px;"></i>
+          Ver trabajos
+        </a>
+      </div>
+      <!-- Stats bar centrado -->
+      <div style="display:flex;justify-content:center;width:100%;margin-top:36px;" id="heroStats" style="opacity:0;transition:opacity 0.8s ease 1.2s;">
+        <div class="hero-stats">
+          <div class="hero-stat"><span class="hero-stat-num">12+</span><span class="hero-stat-label">Materiales</span></div>
+          <div class="hero-stat-div"></div>
+          <div class="hero-stat"><span class="hero-stat-num">48h</span><span class="hero-stat-label">Entrega</span></div>
+          <div class="hero-stat-div"></div>
+          <div class="hero-stat"><span class="hero-stat-num">AR</span><span class="hero-stat-label">Realidad aumentada</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Indicador de scroll -->
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 opacity-0" id="scrollHint">
+      <span style="font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:#4A5A72; font-weight:500;">scroll</span>
+      <div class="scroll-chevron"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       CATÁLOGO
+  ============================================================ -->
+  <!-- ============================================================
+       CUIDADO DE TUS PIEZAS
+  ============================================================ -->
+  <section id="cuidado" class="py-24 px-6" style="background:#0F0F14;">
+    <div class="max-w-6xl mx-auto">
+
+      <div class="text-center mb-14 scroll-reveal">
+        <span class="section-label">Guía de materiales</span>
+        <h2 class="section-title">Cuida tu pieza<br>como merece.</h2>
+        <p class="section-subtitle mt-4 max-w-2xl mx-auto">Cada material tiene su carácter. Aquí te explicamos —en palabras simples— cómo cuidar, limpiar y proteger tu impresión para que dure mucho más.</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 scroll-reveal">
+
+        <!-- PLA -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(37,211,102,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#25D366,#1db954);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🌿</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">PLA</h3>
+                  <p style="font-size:11px;color:#25D366;font-weight:600;margin:0;">El más popular</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.2);color:#25D366;font-weight:600;white-space:nowrap;">Decoración</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.2);color:#25D366;font-weight:600;white-space:nowrap;">Prototipos</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">Material vegetal, seguro y fácil de cuidar. Perfecto para figuras, decoración y piezas que no reciben calor ni golpes fuertes. Es el más común en impresión 3D.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Limpia con un paño húmedo sin jabón — como si fuera plástico normal</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Ideal para interiores: figuras, soportes, maquetas y decoración</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Guárdalo lejos de ventanas y luz solar directa para preservar el color</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>Se deforma si lo dejas en un carro bajo el sol o cerca de una cocina caliente (se dobla a partir de 55–60°C)</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>No usar lavavajillas ni sumergir en agua caliente por tiempo prolongado</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#25D366;"></span><span style="width:8px;height:8px;border-radius:50%;background:#25D366;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Durabilidad exterior</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#25D366;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PLA Seda -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(212,160,23,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#d4a017,#f0c040);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(212,160,23,.12);border:1px solid rgba(212,160,23,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">✨</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">PLA Seda</h3>
+                  <p style="font-size:11px;color:#d4a017;font-weight:600;margin:0;">Acabado brillante</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(212,160,23,.1);border:1px solid rgba(212,160,23,.2);color:#d4a017;font-weight:600;white-space:nowrap;">Decoración</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(212,160,23,.1);border:1px solid rgba(212,160,23,.2);color:#d4a017;font-weight:600;white-space:nowrap;">Regalos</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">Una variante del PLA con un brillo sedoso y metálico que lo hace ver premium. Ideal para figuras coleccionables, trofeos y piezas decorativas que quieres que luzcan especiales.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Limpia con paño de microfibra seco para no rayar el acabado brillante</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Para polvo, usa una brocha suave — nunca franela áspera</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Perfecto para vitrinas, estantes y espacios de trabajo</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>Mismas limitaciones del PLA regular — evitar calor directo y sol prolongado</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>El brillo puede opacarse si se usa acetona o alcohol para limpiarlo</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Acabado visual</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span><span style="width:8px;height:8px;border-radius:50%;background:#d4a017;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PETG -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(91,155,213,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#5B9BD5,#78B4E8);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(91,155,213,.12);border:1px solid rgba(91,155,213,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🔩</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">PETG</h3>
+                  <p style="font-size:11px;color:#5B9BD5;font-weight:600;margin:0;">Resistente y versátil</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(91,155,213,.1);border:1px solid rgba(91,155,213,.2);color:#5B9BD5;font-weight:600;white-space:nowrap;">Funcional</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(91,155,213,.1);border:1px solid rgba(91,155,213,.2);color:#5B9BD5;font-weight:600;white-space:nowrap;">Exterior</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(91,155,213,.1);border:1px solid rgba(91,155,213,.2);color:#5B9BD5;font-weight:600;white-space:nowrap;">Técnico</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">Un material más resistente que el PLA y menos frágil. Tolera mejor el calor y la humedad. Úsalo cuando la pieza necesita aguantar más uso diario o estar en un ambiente húmedo.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Limpia con agua y jabón neutro, incluso un cepillo suave — muy fácil de lavar</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Resiste en exterior: sol, lluvia y humedad sin deformarse fácilmente</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Aguanta temperaturas de hasta 80°C — apto para zonas calientes del hogar</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Ideal para: soportes, piezas de vehículos, organizadores de cocina y baño</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>No es flexible — si necesitas que doble sin romperse, usa TPU en su lugar</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Durabilidad exterior</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#5B9BD5;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TPU -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(255,176,32,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#FF6920,#FFB020);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🧤</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">TPU</h3>
+                  <p style="font-size:11px;color:#FFB020;font-weight:600;margin:0;">Flexible y suave</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.2);color:#FFB020;font-weight:600;white-space:nowrap;">Fundas</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.2);color:#FFB020;font-weight:600;white-space:nowrap;">Protección</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.2);color:#FFB020;font-weight:600;white-space:nowrap;">Funcional</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">Material tipo goma — flexible, suave al tacto y absorbe golpes. Se usa para fundas, protectores, mangos y cualquier pieza que necesite doblar sin romperse.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Lava con agua tibia y jabón de fregar normal — resiste bien el agua</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>No temas doblarlo, estirarlo o apretarlo — es prácticamente indestructible en uso cotidiano</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Aguanta bien la temperatura — no se deforma en el bolsillo ni en el carro</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Ideal para: fundas de teléfono, protectores de esquinas, calzado, mangos de herramientas</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>No usar acetona, thinner ni solventes fuertes — los disuelven como si fueran goma</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Flexibilidad</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span><span style="width:8px;height:8px;border-radius:50%;background:#FFB020;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABS -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(168,139,250,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#A78BFA,#7C3AED);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(168,139,250,.12);border:1px solid rgba(168,139,250,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">⚙️</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">ABS</h3>
+                  <p style="font-size:11px;color:#A78BFA;font-weight:600;margin:0;">Alta resistencia</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(168,139,250,.1);border:1px solid rgba(168,139,250,.2);color:#A78BFA;font-weight:600;white-space:nowrap;">Industrial</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(168,139,250,.1);border:1px solid rgba(168,139,250,.2);color:#A78BFA;font-weight:600;white-space:nowrap;">Funcional</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(168,139,250,.1);border:1px solid rgba(168,139,250,.2);color:#A78BFA;font-weight:600;white-space:nowrap;">Técnico</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">Material muy resistente al impacto y al calor. Es el plástico de las cajas de herramientas y cascos de juguete. Aguanta más maltrato que el PLA pero requiere un poco más de cuidado.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Limpia con agua tibia y detergente suave, o con alcohol isopropílico (sin frotar fuerte)</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Resiste temperaturas de hasta 100°C — ideal para piezas de motor o electrónica</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Muy bueno para piezas mecánicas, carcasas, repuestos y piezas de vehículos</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>La acetona sí lo afecta — úsala solo si quieres lijar o dar acabado, no para limpiar</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>Con el tiempo y el sol puede ponerse amarillento — mejor guardarlo cubierto si no se usa</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al golpe</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Nylon -->
+        <div style="background:#111116;border:1px solid #1E1E28;border-radius:18px;overflow:hidden;transition:transform .35s,border-color .3s;" onmouseover="this.style.transform='translateY(-6px)';this.style.borderColor='rgba(244,114,182,.3)'" onmouseout="this.style.transform='';this.style.borderColor='#1E1E28'">
+          <div style="height:5px;background:linear-gradient(90deg,#F472B6,#EC4899);"></div>
+          <div style="padding:22px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(244,114,182,.12);border:1px solid rgba(244,114,182,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🏋️</div>
+                <div>
+                  <h3 style="font-size:17px;font-weight:800;color:#F0F0F6;letter-spacing:-.02em;margin:0;">Nylon</h3>
+                  <p style="font-size:11px;color:#F472B6;font-weight:600;margin:0;">El más técnico</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(244,114,182,.1);border:1px solid rgba(244,114,182,.2);color:#F472B6;font-weight:600;white-space:nowrap;">Industrial</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(244,114,182,.1);border:1px solid rgba(244,114,182,.2);color:#F472B6;font-weight:600;white-space:nowrap;">Ingeniería</span>
+                <span style="font-size:10px;padding:3px 9px;border-radius:100px;background:rgba(244,114,182,.1);border:1px solid rgba(244,114,182,.2);color:#F472B6;font-weight:600;white-space:nowrap;">Alta carga</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:#5A6080;line-height:1.6;margin:10px 0 14px;">El material más resistente y ligero. Se usa en piezas de ingeniería, engranajes y aplicaciones donde todo lo demás falla. Requiere más cuidado para conservarse bien.</p>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Limpia en seco o con paño apenas húmedo — absorbe la humedad si lo mojas mucho</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Aguanta temperaturas altas y fuerza mecánica intensa — ideal para piezas de maquinaria</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#8090B0;line-height:1.5;"><span style="color:#25D366;flex-shrink:0;font-weight:700;">✓</span><span>Muy bueno para: engranajes, poleas, bisagras, piezas que rozan entre sí</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>Guárdalo en bolsa sellada cuando no lo uses — absorbe humedad del ambiente y pierde resistencia</span></div>
+              <div style="display:flex;gap:8px;font-size:12.5px;color:#FF6920;line-height:1.5;font-weight:600;"><span style="flex-shrink:0;">⚠</span><span>No sumergir en agua por largos períodos — se puede hinchar ligeramente</span></div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid #1E1E28;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia al calor</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#1E1E28;"></span></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#4D5070;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">Resistencia mecánica</span>
+                <div style="display:flex;gap:3px;"><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span><span style="width:8px;height:8px;border-radius:50%;background:#F472B6;"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Nota adicional / CTA -->
+      <div class="scroll-reveal" style="margin-top:40px;padding:24px 28px;background:#111116;border:1px solid #1E1E28;border-radius:18px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;">
+        <div>
+          <p style="font-size:15px;font-weight:700;color:#F0F0F6;margin:0 0 4px;">¿No sabes qué material elegir?</p>
+          <p style="font-size:13px;color:#4D5070;margin:0;">Cuéntanos para qué necesitas la pieza y te recomendamos el material ideal.</p>
+        </div>
+        <a href="#contacto" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:100px;background:rgba(255,105,32,.1);border:1px solid rgba(255,105,32,.3);color:#FF6920;font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap;transition:background .2s;" onmouseover="this.style.background='rgba(255,105,32,.18)'" onmouseout="this.style.background='rgba(255,105,32,.1)'">
+          Asesoría gratuita →
+        </a>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="catalogo" class="py-28 px-6 bg-nx-black">
+    <div class="max-w-6xl mx-auto">
+
+      <!-- Header -->
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="section-label">Portfolio</span>
+        <h2 class="section-title">Trabajos Realizados</h2>
+        <div class="divider"></div>
+        <p class="section-subtitle mt-4 max-w-lg mx-auto">
+          Cada pieza es una historia de precisión. Desliza para descubrir.
+        </p>
+      </div>
+
+      <!-- Filtros -->
+      <div class="flex flex-wrap gap-3 justify-center mb-12 scroll-reveal">
+        <button class="pill active" data-filter="all">Todos</button>
+        <button class="pill" data-filter="prototipos">Prototipos</button>
+        <button class="pill" data-filter="decoracion">Decoración</button>
+        <button class="pill" data-filter="funcional">Funcional</button>
+        <button class="pill" data-filter="miniatura">Miniaturas</button>
+      </div>
+
+      <!-- Grid de tarjetas (cargado dinámicamente desde admin) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5" id="catalogGrid">
+        <!-- JS buildCatalog() lo llena -->
+        <article class="catalog-card scroll-reveal catalog-placeholder" data-category="prototipos" style="display:none;">
+          <div class="card-media">
+            <div class="absolute inset-0 flex flex-col items-center justify-center bg-nx-deep" style="z-index:2;">
+              <div class="cube-scene"><div class="rotating-cube"><div class="cube-face front"></div><div class="cube-face back"></div><div class="cube-face left"></div><div class="cube-face right"></div><div class="cube-face top"></div><div class="cube-face bottom"></div></div></div>
+              <p class="mt-4 text-xs font-mono text-nx-muted tracking-widest">PROTOTIPO.glb</p>
+            </div>
+            <model-viewer src="assets/models/prototipo-1.glb" alt="Prototipo industrial" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" loading="lazy" reveal="interaction"></model-viewer>
+            <div class="card-overlay">
+              <button class="btn-ar" onclick="showARMessage(this)">
+                <i data-lucide="scan-face" style="width:14px;height:14px;"></i>
+                Ver en Realidad Aumentada
+              </button>
+            </div>
+          </div>
+          <div class="p-5">
+            <h3 class="text-white font-semibold text-base mb-1">Prototipo Industrial v1</h3>
+            <p class="text-nx-muted text-xs mb-4">Pieza de ajuste para ensamble mecánico</p>
+            <div>
+              <div><span class="spec-label">Material</span><span class="spec-value">PLA Negro</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- FIN DE TARJETAS ESTÁTICAS — el resto lo genera buildCatalog() -->
+
+      </div><!-- / grid -->
+
+      <!-- Botón Ver catálogo completo -->
+      <div class="text-center mt-16 scroll-reveal">
+        <a href="catalogo.html" class="btn-secondary inline-flex items-center gap-2" style="text-decoration:none;">
+          <i data-lucide="grid" style="width:16px;height:16px;"></i>
+          Ver catálogo completo
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FILAMENTOS
+  ============================================================ -->
+  <section id="filamentos" class="py-28 px-6" style="background:#060C16;">
+    <div class="max-w-5xl mx-auto">
+
+      <div class="text-center mb-20 scroll-reveal">
+        <span class="section-label">Materiales</span>
+        <h2 class="section-title">Muestrario de Filamentos</h2>
+        <div class="divider"></div>
+        <p class="section-subtitle mt-4">Toca un material para ver su acabado y especificaciones</p>
+      </div>
+
+      <div class="flex flex-col lg:flex-row gap-10 lg:gap-16 items-center scroll-reveal">
+
+        <!-- Display central -->
+        <div class="w-full max-w-xs lg:max-w-sm mx-auto flex-shrink-0" style="display:flex;flex-direction:column;gap:12px;">
+
+          <!-- Tabs de modelos del muestrario -->
+          <div id="showcaseTabs" style="display:none;flex-wrap:wrap;gap:6px;justify-content:center;"></div>
+
+          <!-- Visor -->
+          <div class="filament-display-box" id="filamentDisplay">
+            <!-- model-viewer — iluminación lightbox pareja, colores exactos -->
+            <model-viewer id="showcaseViewer"
+              camera-controls auto-rotate
+              ar ar-modes="webxr scene-viewer quick-look"
+              environment-image="neutral"
+              exposure="1.0"
+              shadow-intensity="0.25"
+              shadow-softness="1"
+              style="width:100%;height:100%;background:#0D1520;--poster-color:#0D1520;position:absolute;inset:0;z-index:1;"
+            ></model-viewer>
+
+            <!-- Placeholder: visible cuando no hay modelo configurado o durante carga -->
+            <div id="filamentPlaceholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0D1520;z-index:2;text-align:center;padding:28px;">
+              <svg style="width:48px;height:48px;margin-bottom:14px;opacity:.25;" viewBox="0 0 24 24" fill="none" stroke="#6B9FD4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              <p style="font-size:13px;color:#4A5A72;line-height:1.6;margin-bottom:12px;">Agrega modelos .glb desde el<br>panel de administración</p>
+              <a href="admin.html" style="font-size:12px;color:#6B9FD4;font-weight:600;text-decoration:none;border:1px solid rgba(107,159,212,.3);border-radius:100px;padding:6px 16px;transition:all .2s;">Abrir admin →</a>
+            </div>
+
+            <!-- Botón pausar/girar rotación automática -->
+            <button id="rotateToggle" onclick="toggleAutoRotate()"
+              style="position:absolute;top:10px;right:10px;z-index:4;display:none;align-items:center;gap:5px;
+                     background:rgba(8,13,21,.75);border:1px solid rgba(107,159,212,.35);border-radius:8px;
+                     padding:5px 11px;cursor:pointer;font-size:11px;font-weight:600;color:#6B9FD4;
+                     font-family:'Space Grotesk',sans-serif;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+                     transition:all .2s;">
+            </button>
+
+            <div class="filament-info-overlay" style="z-index:3;">
+              <h3 class="text-white font-bold text-xl mb-1" id="filamentName">PLA Negro Mate</h3>
+              <p class="text-nx-gray text-sm mb-3" id="filamentDesc">Alta rigidez, acabado mate premium.</p>
+              <div class="flex flex-wrap gap-2" id="filamentSpecs"></div>
+            </div>
+          </div>
+
+          <!-- Controles de iluminación — rueda solar + sliders -->
+          <div id="lightingControls" style="display:none;background:#0D1520;border:1px solid #1A2535;border-radius:16px;padding:16px;gap:14px;flex-direction:column;">
+            <p style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#4A5A72;margin:0;">Iluminación</p>
+            <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+
+              <!-- Solo rueda solar — intensidad fija, dirección ajustable -->
+              <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0;">
+                <canvas id="lightSphere" width="100" height="100"
+                        style="border-radius:50%;cursor:crosshair;touch-action:none;border:1px solid #1A2535;display:block;"
+                        title="Arrastra el sol para cambiar la dirección de la luz"></canvas>
+                <span style="font-size:10px;color:#4A5A72;text-align:center;">Arrastra para<br>mover la luz</span>
+              </div>
+
+              <!-- Info fija -->
+              <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:8px;">
+                <p style="font-size:12px;color:#8899B4;line-height:1.6;">
+                  Mueve el sol para cambiar el ángulo de iluminación y ver las sombras y brillos del filamento desde distintas perspectivas.
+                </p>
+                <p style="font-size:11px;color:#4A5A72;">La intensidad y temperatura están calibradas para que el color que ves en pantalla sea fiel al filamento real.</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Botonera -->
+        <div class="flex-1 w-full">
+          <div class="grid grid-cols-2 xs:grid-cols-3 gap-2 sm:gap-3" id="filamentSelector" style="grid-template-columns:repeat(3,1fr);">
+            <!-- construido dinámicamente por JS desde localStorage -->
+          </div>
+          <p class="text-nx-muted text-xs text-center mt-6" style="font-size:11px; letter-spacing:0.05em;">
+            Los colores son representativos · Consultar disponibilidad de stock
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       PROPUESTA DE VALOR
+  ============================================================ -->
+  <section class="py-24 px-6 bg-nx-black">
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="section-label">¿Por qué elegirnos?</span>
+        <h2 class="section-title">Tu idea, hecha realidad.<br>Sin complicaciones.</h2>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+
+        <div class="info-card scroll-reveal">
+          <div style="width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;background:rgba(37,211,102,0.1);border:1px solid rgba(37,211,102,0.2);">
+            <i data-lucide="message-circle" style="width:22px;height:22px;color:#25D366;"></i>
+          </div>
+          <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;margin-bottom:8px;">Respuesta Rápida</h3>
+          <p style="font-size:13px;color:#4D5070;line-height:1.6;">Te respondemos por WhatsApp en menos de 2 horas. Cotización sin compromiso.</p>
+        </div>
+
+        <div class="info-card scroll-reveal">
+          <div style="width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;background:rgba(255,105,32,0.1);border:1px solid rgba(255,105,32,0.2);">
+            <i data-lucide="zap" style="width:22px;height:22px;color:#FF6920;"></i>
+          </div>
+          <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;margin-bottom:8px;">Acabado Impecable</h3>
+          <p style="font-size:13px;color:#4D5070;line-height:1.6;">Superficies lisas y detalles nítidos. Tu pieza queda exactamente como la imaginas.</p>
+        </div>
+
+        <div class="info-card scroll-reveal">
+          <div style="width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;background:rgba(91,155,213,0.1);border:1px solid rgba(91,155,213,0.2);">
+            <i data-lucide="package" style="width:22px;height:22px;color:#5B9BD5;"></i>
+          </div>
+          <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;margin-bottom:8px;">Material a Medida</h3>
+          <p style="font-size:13px;color:#4D5070;line-height:1.6;">PLA, PETG, TPU y más. Te recomendamos el correcto para tu proyecto.</p>
+        </div>
+
+        <div class="info-card scroll-reveal">
+          <div style="width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;background:rgba(255,176,32,0.1);border:1px solid rgba(255,176,32,0.2);">
+            <i data-lucide="layers" style="width:22px;height:22px;color:#FFB020;"></i>
+          </div>
+          <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;margin-bottom:8px;">Sin Pedido Mínimo</h3>
+          <p style="font-size:13px;color:#4D5070;line-height:1.6;">Una pieza o cien, las fabricamos. Sin contratos, sin burocracia.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       CONTACTO
+  ============================================================ -->
+  <section id="contacto" class="py-28 px-6 bg-nx-black relative overflow-hidden">
+    <div class="contact-glow"></div>
+    <div class="max-w-3xl mx-auto text-center relative z-10">
+
+      <div class="scroll-reveal">
+        <span class="section-label">Contacto</span>
+        <h2 class="section-title mt-2">Hablemos de tu proyecto</h2>
+        <div class="divider"></div>
+        <p class="section-subtitle mt-5 max-w-xl mx-auto">
+          ¿Tienes una idea? Cuéntanos. Respondemos en menos de 24 horas y te damos presupuesto sin compromiso.
+        </p>
+      </div>
+
+      <div class="mt-10 scroll-reveal" style="display:flex;flex-direction:column;align-items:center;gap:0;">
+        <p class="online-badge"><span class="online-dot"></span>Respondemos en menos de 2 horas · Lun–Sáb 9am–8pm</p>
+        <a href="https://wa.me/528297996751?text=%C2%A1Hola%20NEXOMAKER3D!%20Escane%C3%A9%20el%20QR%20de%20mi%20pieza%20y%20me%20encant%C3%B3%20la%20p%C3%A1gina%20web.%20Quiero%20cotizar%20un%20proyecto%20de%20impresi%C3%B3n%203D."
+           target="_blank" rel="noopener"
+           class="btn-whatsapp">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+          </svg>
+          Cotizar por WhatsApp
+        </a>
+      </div>
+
+      <!-- Info cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-5 mt-16 scroll-reveal">
+        <div class="info-card">
+          <div style="width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;background:rgba(37,211,102,0.1);border:1px solid rgba(37,211,102,0.2);">
+            <i data-lucide="message-circle" style="width:18px;height:18px;color:#25D366;"></i>
+          </div>
+          <p style="font-size:12px;color:#4D5070;font-weight:500;margin-bottom:4px;">Sin formularios</p>
+          <p style="font-size:14px;font-weight:700;color:#F0F0F6;">Directo por WhatsApp</p>
+
+        </div>
+        <div class="info-card">
+          <div style="width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;background:rgba(255,105,32,0.1);border:1px solid rgba(255,105,32,0.2);">
+            <i data-lucide="zap" style="width:18px;height:18px;color:#FF6920;"></i>
+          </div>
+          <p style="font-size:12px;color:#4D5070;font-weight:500;margin-bottom:4px;">Piezas simples</p>
+          <p style="font-size:14px;font-weight:700;color:#F0F0F6;">Listas en 24–48 horas</p>
+        </div>
+        <div class="info-card">
+          <div style="width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;background:rgba(91,155,213,0.1);border:1px solid rgba(91,155,213,0.2);">
+            <i data-lucide="package" style="width:18px;height:18px;color:#5B9BD5;"></i>
+          </div>
+          <p style="font-size:12px;color:#4D5070;font-weight:500;margin-bottom:4px;">Sin pedido mínimo</p>
+          <p style="font-size:14px;font-weight:700;color:#F0F0F6;">Una pieza o cien</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FOOTER
+  ============================================================ -->
+  <footer class="py-10 px-6" style="border-top: 1px solid #1E1E28; background: #0A0A0C;">
+    <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+
+      <a href="#hero" class="nav-logo text-lg">NEXO<span class="text-gradient">MAKER</span>3D</a>
+
+      <div class="flex items-center gap-6">
+        <a href="https://instagram.com/nexomaker3d" target="_blank" rel="noopener" class="social-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          Instagram
+        </a>
+        <a href="https://tiktok.com/@nexomaker3d" target="_blank" rel="noopener" class="social-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.27 6.27 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.17 8.17 0 004.78 1.52V6.75a4.85 4.85 0 01-1.01-.06z"/></svg>
+          TikTok
+        </a>
+      </div>
+
+      <p class="text-nx-muted text-xs">
+        © 2025 NEXOMAKER3D · Todos los derechos reservados
+      </p>
+    </div>
+  </footer>
+
+  <!-- ============================================================
+       WHATSAPP FLOTANTE
+  ============================================================ -->
+  <a href="https://wa.me/528297996751?text=%C2%A1Hola%20NEXOMAKER3D!%20Escane%C3%A9%20el%20QR%20de%20mi%20pieza%20y%20me%20encant%C3%B3%20la%20p%C3%A1gina%20web.%20Quiero%20cotizar%20un%20proyecto%20de%20impresi%C3%B3n%203D."
+     target="_blank" rel="noopener"
+     id="waFloat"
+     aria-label="Contactar por WhatsApp">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  </a>
+
+  <!-- ============================================================
+       MODAL VISOR 3D
+  ============================================================ -->
+  <div id="viewerModal" style="position:fixed;inset:0;background:rgba(0,0,0,.94);backdrop-filter:blur(12px);z-index:600;display:none;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1A2535;flex-shrink:0;background:#080D15;">
+      <div>
+        <h2 id="vmTitle" style="font-size:18px;font-weight:700;font-family:'Space Grotesk',sans-serif;"></h2>
+        <p  id="vmMeta"  style="font-size:13px;color:#8899B4;margin-top:2px;"></p>
+      </div>
+      <button onclick="closeViewer()" style="background:none;border:none;cursor:pointer;color:#fff;padding:8px;line-height:0;">
+        <i data-lucide="x" style="width:24px;height:24px;"></i>
+      </button>
+    </div>
+    <div style="flex:1;position:relative;min-height:0;background:#000;overflow:hidden;">
+      <!-- GLB/GLTF: model-viewer con AR nativo -->
+      <model-viewer id="vmViewer" camera-controls auto-rotate ar ar-modes="webxr scene-viewer quick-look" shadow-intensity="0.3" shadow-softness="1" exposure="0.9" environment-image="neutral" style="width:100%;height:100%;background:transparent;--poster-color:#080D15;display:none;"></model-viewer>
+      <!-- 3MF: Three.js canvas -->
+      <canvas id="vmCanvas3mf" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
+      <!-- Imagen de referencia (cuando no hay modelo 3D) -->
+      <div id="vmImgView" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:#000;">
+        <img id="vmImgEl" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">
+      </div>
+      <!-- Sin nada -->
+      <div id="vmNoModel" style="display:flex;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;color:#4A5A72;text-align:center;padding:32px;">
+        <i data-lucide="box" style="width:52px;height:52px;margin-bottom:16px;opacity:.4;"></i>
+        <p style="font-size:16px;font-weight:600;color:#8899B4;">Modelo 3D no disponible</p>
+        <p id="vmNoModelMsg" style="font-size:13px;margin-top:8px;max-width:300px;line-height:1.6;">Agrega un archivo desde el panel de administración</p>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid #1A2535;background:#080D15;flex-shrink:0;">
+      <!-- Botón AR — prominente en mobile -->
+      <a id="vmAR" href="#" target="_blank" rel="noopener"
+         style="display:none;width:100%;justify-content:center;align-items:center;gap:8px;
+                background:linear-gradient(135deg,#4A7AAF,#6B9FD4);color:#fff;
+                padding:14px;border-radius:12px;font-weight:700;font-size:15px;
+                text-decoration:none;margin-bottom:12px;box-shadow:0 4px 20px rgba(107,159,212,.35);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Ver en Realidad Aumentada (AR)
+      </a>
+      <!-- Colores identificados en el modelo 3MF — recoloreables por filamento -->
+      <div id="vm3mfSection" style="display:none;margin-bottom:12px;">
+        <p style="font-size:11px;font-weight:600;color:#8899B4;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">
+          Colores del modelo — toca uno para cambiar el filamento
+        </p>
+        <div id="vm3mfSwatches" style="display:flex;flex-wrap:wrap;gap:12px;"></div>
+      </div>
+      <div id="vmColors" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;min-height:20px;"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a id="vmWa" href="#" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;flex:1;justify-content:center;">
+          <i data-lucide="message-circle" style="width:15px;height:15px;"></i> Pedir este modelo
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       JAVASCRIPT
+  ============================================================ -->
+  <script>
+    // ============================================================
+    // STORAGE HELPERS
+    // ============================================================
+    const LS_CFG = 'nx_settings';
+    const LS_FIL = 'nx_filaments';
+    const LS_CAT = 'nx_catalog';
+
+    function lsGet(key, def) {
+      try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }
+      catch { return def; }
+    }
+
+    // ============================================================
+    // DEFAULTS DE FILAMENTOS
+    // ============================================================
+    const DEFAULT_FILAMENTS = [
+      { id:'pla-negro',  name:'PLA Negro Mate',       type:'PLA',  hex:'#1a1a1a', rough:0.95, metal:0.00, opac:1.0, temp:'200°C', layer:'0.08mm', desc:'Alta rigidez, acabado mate premium. Ideal para piezas funcionales y decorativas.', stock:true },
+      { id:'pla-oro',    name:'PLA Seda Oro',          type:'PLA',  hex:'#d4a017', rough:0.15, metal:0.80, opac:1.0, temp:'210°C', layer:'0.12mm', desc:'Acabado metálico sedoso con brillo de alta gama.', stock:true },
+      { id:'petg-t',     name:'PETG Transparente',     type:'PETG', hex:'#c8e0f4', rough:0.05, metal:0.00, opac:0.35, temp:'235°C', layer:'0.15mm', desc:'Alta resistencia al impacto, translúcido, apto para uso exterior.', stock:true },
+      { id:'tpu-verde',  name:'TPU Flexible Verde',    type:'TPU',  hex:'#2d6040', rough:0.85, metal:0.00, opac:1.0, temp:'220°C', layer:'0.20mm', desc:'Elastómero flexible, resistente a impactos y flexión repetida.', stock:true },
+      { id:'pla-rojo',   name:'PLA Rojo Fuego',        type:'PLA',  hex:'#cc2200', rough:0.50, metal:0.00, opac:1.0, temp:'200°C', layer:'0.08mm', desc:'Color intenso para piezas de alto impacto visual.', stock:true },
+      { id:'pla-blanco', name:'PLA Blanco Neutro',     type:'PLA',  hex:'#e8e8e8', rough:0.90, metal:0.00, opac:1.0, temp:'200°C', layer:'0.08mm', desc:'Versátil y elegante. Perfecto para postprocesado o pintura.', stock:true },
+      { id:'pla-azul',   name:'PLA Azul Océano',       type:'PLA',  hex:'#1565C0', rough:0.60, metal:0.00, opac:1.0, temp:'200°C', layer:'0.10mm', desc:'Azul profundo para piezas decorativas de alto impacto.', stock:true },
+      { id:'pla-plata',  name:'PLA Seda Plateado',     type:'PLA',  hex:'#C0C0C0', rough:0.10, metal:0.90, opac:1.0, temp:'210°C', layer:'0.12mm', desc:'Acabado cromado plateado de alta reflectividad.', stock:true },
+      { id:'petg-negro', name:'PETG Negro Resistente', type:'PETG', hex:'#0D0D0D', rough:0.60, metal:0.00, opac:1.0, temp:'235°C', layer:'0.15mm', desc:'PETG negro, resistente al calor y productos químicos.', stock:true },
+      { id:'tpu-naranja',name:'TPU Naranja Flex',      type:'TPU',  hex:'#E65100', rough:0.80, metal:0.00, opac:1.0, temp:'220°C', layer:'0.20mm', desc:'Flexible naranja brillante, ideal para mangos y protecciones.', stock:true },
+      { id:'pla-verde',  name:'PLA Verde Bosque',      type:'PLA',  hex:'#2E7D32', rough:0.70, metal:0.00, opac:1.0, temp:'200°C', layer:'0.10mm', desc:'Verde natural para figuras orgánicas y decoración.', stock:false },
+      { id:'pla-amarillo',name:'PLA Amarillo Solar',   type:'PLA',  hex:'#F9A825', rough:0.55, metal:0.00, opac:1.0, temp:'200°C', layer:'0.10mm', desc:'Amarillo brillante para alta visibilidad.', stock:true },
+    ];
+
+    function getFilaments() {
+      return lsGet(LS_FIL, null) || DEFAULT_FILAMENTS;
+    }
+
+    // ============================================================
+    // DATOS DE FILAMENTOS (legacy alias para compatibilidad)
+    // ============================================================
+    const FILAMENTS = {
+      'pla-negro': {
+        name: 'PLA Negro Mate',
+        desc: 'Alta rigidez y dimensionalmente estable. Acabado mate premium ideal para piezas funcionales y decorativas.',
+        surface: 'linear-gradient(145deg, #0D1520 0%, #1A2535 45%, #070C12 100%)',
+        sheen: 'none',
+        specs: [
+          { label: 'Temp.', value: '200°C' },
+          { label: 'Capa mín.', value: '0.08mm' },
+          { label: 'Acabado', value: 'Mate' }
+        ]
+      },
+      'pla-seda-oro': {
+        name: 'PLA Seda Oro',
+        desc: 'Acabado metálico sedoso con brillo profundo. Impacto visual de alto nivel para piezas premium.',
+        surface: 'linear-gradient(145deg, #b8960c 0%, #f4d03f 35%, #d4a017 65%, #8b6914 100%)',
+        sheen: 'linear-gradient(135deg, rgba(255,255,200,0.45) 0%, transparent 50%, rgba(255,220,50,0.1) 100%)',
+        specs: [
+          { label: 'Temp.', value: '210°C' },
+          { label: 'Capa mín.', value: '0.12mm' },
+          { label: 'Acabado', value: 'Seda' }
+        ]
+      },
+      'petg-transparente': {
+        name: 'PETG Transparente',
+        desc: 'Alta resistencia al impacto y a la humedad. Translúcido y apto para uso exterior o en contacto con alimentos.',
+        surface: 'linear-gradient(145deg, rgba(200,225,255,0.18) 0%, rgba(240,250,255,0.08) 50%, rgba(180,215,255,0.12) 100%)',
+        sheen: 'linear-gradient(130deg, rgba(255,255,255,0.35) 0%, transparent 40%, rgba(200,235,255,0.15) 100%)',
+        specs: [
+          { label: 'Temp.', value: '235°C' },
+          { label: 'Capa mín.', value: '0.15mm' },
+          { label: 'Acabado', value: 'Brillante' }
+        ]
+      },
+      'tpu-flexible': {
+        name: 'TPU Flexible',
+        desc: 'Elastómero termoplástico de alta resiliencia. Absorbe impactos, es resistente a la abrasión y apto para partes de contacto.',
+        surface: 'linear-gradient(145deg, #1a3a2a 0%, #2d6040 40%, #1e4a32 80%, #152e20 100%)',
+        sheen: 'linear-gradient(135deg, rgba(100,200,140,0.18) 0%, transparent 55%)',
+        specs: [
+          { label: 'Temp.', value: '220°C' },
+          { label: 'Capa mín.', value: '0.20mm' },
+          { label: 'Acabado', value: 'Flexible' }
+        ]
+      },
+      'pla-rojo': {
+        name: 'PLA Rojo Fuego',
+        desc: 'Color intenso y saturado para piezas de alto impacto visual. Perfecto para señalización, manetas y accesorios.',
+        surface: 'linear-gradient(145deg, #8b0000 0%, #cc2200 35%, #ff3300 65%, #990000 100%)',
+        sheen: 'linear-gradient(135deg, rgba(255,180,140,0.3) 0%, transparent 50%)',
+        specs: [
+          { label: 'Temp.', value: '200°C' },
+          { label: 'Capa mín.', value: '0.08mm' },
+          { label: 'Acabado', value: 'Brillante' }
+        ]
+      },
+      'pla-blanco': {
+        name: 'PLA Blanco Neutro',
+        desc: 'Versátil y elegante. Ideal para piezas que requieren postprocesado, pintura o impresión directa sobre la superficie.',
+        surface: 'linear-gradient(145deg, #e0e0e0 0%, #f5f5f5 45%, #d8d8d8 100%)',
+        sheen: 'linear-gradient(135deg, rgba(255,255,255,0.7) 0%, transparent 55%)',
+        specs: [
+          { label: 'Temp.', value: '200°C' },
+          { label: 'Capa mín.', value: '0.08mm' },
+          { label: 'Acabado', value: 'Mate' }
+        ]
+      }
+    };
+
+    // ============================================================
+    // CAMBIO DE FILAMENTO
+    // ============================================================
+    function setFilament(key) {
+      const f = FILAMENTS[key];
+      if (!f) return;
+
+      const surface = document.getElementById('filamentSurface');
+      const sheen   = document.getElementById('filamentSheen');
+      const name    = document.getElementById('filamentName');
+      const desc    = document.getElementById('filamentDesc');
+      const specs   = document.getElementById('filamentSpecs');
+
+      // Fade out
+      surface.style.opacity = '0';
+      sheen.style.opacity   = '0';
+
+      setTimeout(() => {
+        surface.style.background = f.surface;
+        sheen.style.background   = f.sheen;
+        name.textContent = f.name;
+        desc.textContent = f.desc;
+
+        specs.innerHTML = f.specs.map(s =>
+          `<div class="spec-chip">
+            <span class="spec-chip-label">${s.label}</span>
+            <span class="spec-chip-value">${s.value}</span>
+          </div>`
+        ).join('');
+
+        // Fade in
+        surface.style.opacity = '1';
+        sheen.style.opacity   = '1';
+      }, 220);
+
+      // Actualizar botón activo
+      document.querySelectorAll('.filament-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filament === key);
+      });
+    }
+
+    // Evento delegado en el selector
+    document.getElementById('filamentSelector').addEventListener('click', e => {
+      const btn = e.target.closest('.filament-btn');
+      if (btn && btn.dataset.filament) setFilament(btn.dataset.filament);
+    });
+
+    // ============================================================
+    // FILTROS DEL CATÁLOGO
+    // ============================================================
+    document.querySelectorAll('.pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+
+        const filter = pill.dataset.filter;
+        document.querySelectorAll('.catalog-card').forEach(card => {
+          const match = filter === 'all' || card.dataset.category === filter;
+          card.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+          if (match) {
+            card.style.opacity = '1';
+            card.style.transform = '';
+            card.style.display = '';
+          } else {
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.97)';
+            setTimeout(() => {
+              if (card.style.opacity === '0') card.style.display = 'none';
+            }, 300);
+          }
+        });
+      });
+    });
+
+    // ============================================================
+    // MENSAJE AR (placeholder hasta tener .glb reales)
+    // ============================================================
+    function showARMessage(btn) {
+      const card = btn.closest('.catalog-card');
+      const pieceName = card?.querySelector('h3')?.textContent || 'esta pieza';
+      alert(`La Realidad Aumentada para "${pieceName}" estará disponible próximamente.\n\nEscríbenos por WhatsApp para recibir el modelo 3D directamente.`);
+    }
+
+    // ============================================================
+    // INICIALIZACIÓN (DOMContentLoaded)
+    // ============================================================
+    document.addEventListener('DOMContentLoaded', () => {
+
+      // Inicializar Lucide icons
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+
+      // Aplicar settings del admin
+      applySettings();
+
+      // Construir selector dinámico de filamentos
+      buildFilamentSelector();
+
+      // Inicializar visor de filamentos (model-viewer)
+      buildShowcaseTabs();
+
+      // Activar primer filamento
+      const fils = getFilaments();
+      if (fils.length) setFilamentById(fils[0].id);
+
+      // Cargar catálogo dinámico desde localStorage
+      buildCatalog();
+
+      // ── Animación de entrada del Hero ──────────────────────────
+      const heroItems = [
+        { id: 'heroLogo',    delay: 100 },
+        { id: 'heroLabel',   delay: 400 },
+        { id: 'heroTitle',   delay: 620 },
+        { id: 'heroTagline', delay: 860 },
+        { id: 'heroCta',     delay: 1080 },
+        { id: 'scrollHint',  delay: 1500 },
+        { id: 'heroStats',   delay: 1300 }
+      ];
+      heroItems.forEach(({ id, delay }) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        setTimeout(() => {
+          el.style.animation = 'none';
+          el.style.opacity   = '0';
+          el.classList.add('animate-fade-in-up');
+          el.style.opacity = '';
+        }, delay);
+      });
+
+      // ── Scroll reveal (Intersection Observer) — repite cada vez que entra al viewport ──
+      window._revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            // Forzar re-trigger: quitar y volver a añadir la clase en el mismo frame
+            entry.target.classList.remove('is-visible');
+            // Pequeño delay para que el browser registre el estado inicial antes de animar
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                entry.target.classList.add('is-visible');
+              });
+            });
+          } else {
+            // Al salir del viewport, resetear para que la próxima vez vuelva a animar
+            entry.target.classList.remove('is-visible');
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+      document.querySelectorAll('.scroll-reveal').forEach(el => window._revealObserver.observe(el));
+
+      // ── WhatsApp flotante ─────────────────────────────────────
+      setTimeout(() => {
+        const waFloat = document.getElementById('waFloat');
+        if (waFloat) waFloat.classList.add('visible');
+      }, 600);
+
+    }); // fin DOMContentLoaded
+
+    // ============================================================
+    // APLICAR SETTINGS DESDE ADMIN (localStorage)
+    // ============================================================
+    function applySettings() {
+      const cfg = lsGet(LS_CFG, null);
+      if (!cfg) return;
+      if (cfg.wa) {
+        const msg = cfg.waMsg || '¡Hola NEXOMAKER3D! Escaneé el QR de mi pieza y me encantó la página web. Quiero cotizar un proyecto de impresión 3D.';
+        const waUrl = `https://wa.me/${cfg.wa}?text=${encodeURIComponent(msg)}`;
+        document.querySelectorAll('a[href*="wa.me"]').forEach(a => {
+          // No tocar el botón del visor (vmWa se maneja por separado)
+          if (a.id !== 'vmWa') a.href = waUrl;
+        });
+      }
+      if (cfg.tagline) { const el = document.getElementById('heroTagline'); if (el) el.textContent = cfg.tagline; }
+      if (cfg.ig) document.querySelectorAll('a[href*="instagram"]').forEach(a => a.href = cfg.ig);
+      if (cfg.tt) document.querySelectorAll('a[href*="tiktok"]').forEach(a => a.href = cfg.tt);
+    }
+
+    // ============================================================
+    // CONSTRUIR CATÁLOGO DINÁMICO (solo destacados en el inicio)
+    // ============================================================
+    function buildCatalog() {
+      const allItems = lsGet(LS_CAT, []);
+      const visible  = allItems.filter(x => x.vis !== false);
+      const featured = visible.filter(x => x.featured === true);
+      const show     = featured.length > 0 ? featured.slice(0, 6) : visible.slice(0, 6);
+      const grid     = document.getElementById('catalogGrid');
+      if (!grid) return;
+
+      // Quitar el placeholder oculto
+      grid.querySelectorAll('.catalog-placeholder').forEach(el => el.remove());
+
+      if (show.length === 0) {
+        grid.innerHTML = `
+          <div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:#4A5A72;">
+            <p style="font-size:16px;margin-bottom:8px;">Catálogo próximamente</p>
+            <p style="font-size:13px;">Añade piezas desde el <a href="admin.html" style="color:#6B9FD4;">panel de administración</a>.</p>
+          </div>`;
+        return;
+      }
+
+      grid.innerHTML = show.map((item, i) => {
+        const delay = ['animation-delay:-0s','animation-delay:-1s','animation-delay:-2s','animation-delay:-3s','animation-delay:-4s','animation-delay:-5s'][i % 6];
+        const _ext = (item.glbType || item.glbName || '').toLowerCase();
+        const hasGlb = item.glb && !_ext.includes('3mf');
+        return `
+          <article class="catalog-card scroll-reveal" data-category="${item.cat||''}" data-id="${item.id}" style="cursor:pointer;" onclick="openViewer('${item.id}')">
+            <div class="card-media" style="cursor:pointer;">
+              ${item.img ? `
+              <img src="${item.img}" alt="${item.name}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;" loading="lazy">` : `
+              <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F0F14;z-index:1;">
+                <div class="cube-scene"><div class="rotating-cube" style="${delay};"><div class="cube-face front"></div><div class="cube-face back"></div><div class="cube-face left"></div><div class="cube-face right"></div><div class="cube-face top"></div><div class="cube-face bottom"></div></div></div>
+                <p style="margin-top:14px;font-size:10px;font-family:monospace;color:#4D5070;letter-spacing:.15em;">${(item.cat||'MODELO').toUpperCase()}</p>
+              </div>`}
+              <div class="card-overlay">
+                <div class="card-overlay-btns">
+                  <button class="btn-view3d" onclick="event.stopPropagation();openViewer('${item.id}')">
+                    <i data-lucide="box" style="width:12px;height:12px;flex-shrink:0;"></i> Ver 3D
+                  </button>
+                  ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();openViewer('${item.id}')">
+                    <i data-lucide="scan" style="width:12px;height:12px;flex-shrink:0;"></i> AR
+                  </button>` : ''}
+                </div>
+              </div>
+            </div>
+            <div style="padding:18px 20px 20px;">
+              <h3 style="font-size:15px;font-weight:700;color:#F0F0F6;letter-spacing:-0.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 0 4px;">${item.name}</h3>
+              <p style="font-size:12px;color:#4D5070;margin:0 0 14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.desc||''}</p>
+              ${item.mat ? `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#2A2A38;">Material</span><span style="font-size:13px;font-weight:600;color:#8090B0;">${item.mat}</span></div>` : ''}
+            </div>
+          </article>`;
+      }).join('');
+
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+      document.querySelectorAll('.catalog-card.scroll-reveal:not(.is-visible)').forEach(el => {
+        if (window._revealObserver) window._revealObserver.observe(el);
+      });
+      // Inyectar modelos IDB en los card-viewers de forma asíncrona
+      _resolveCardViewers(show);
+    }
+
+    // Resuelve IDB → blob URL para model-viewers (GLB) y canvas (3MF) de las tarjetas
+    async function _resolveCardViewers(items) {
+      for (const item of items) {
+        if (!item.glb) continue;
+        // ── GLB: inyectar src en model-viewer si venía de IDB ──
+        if (item.glbType !== '3mf' && item.glb.startsWith('idb:')) {
+          const mv = document.getElementById('card-mv-' + item.id);
+          if (!mv) continue;
+          try {
+            const buf = await nxIdbGetLocal(item.glb.slice(4));
+            if (buf) mv.src = URL.createObjectURL(new Blob([buf], {type:'model/gltf-binary'}));
+          } catch(e) {}
+        }
+        // ── 3MF: cargar en canvas con mini-renderer Three.js ──
+        if (item.glbType === '3mf') {
+          const canvas = document.getElementById('card-3mf-' + item.id);
+          if (!canvas || !window.NX_3MF) continue;
+          let url = item.glb;
+          if (url.startsWith('idb:')) {
+            try {
+              const buf = await nxIdbGetLocal(url.slice(4));
+              if (!buf) continue;
+              url = URL.createObjectURL(new Blob([buf], {type:'model/3mf'}));
+            } catch(e) { continue; }
+          }
+          window.NX_3MF.loadCard(url, canvas).catch(()=>{});
+        }
+      }
+    }
+
+    // Dispara AR desde la tarjeta; si no disponible abre el visor modal
+    function _cardAR(itemId) {
+      const mv = document.getElementById('card-mv-' + itemId);
+      if (mv && typeof mv.activateAR === 'function') {
+        try { mv.activateAR(); return; } catch(e) {}
+      }
+      openViewer(itemId);
+    }
+
+    // ============================================================
+    // VISOR 3D — abrir / cerrar / cambiar color
+    // ============================================================
+    async function openViewer(itemId) {
+      const allItems = lsGet(LS_CAT, []);
+      const item     = allItems.find(x => x.id === itemId);
+      if (!item) return;
+
+      const filaments = getFilaments();
+      const cfg       = lsGet(LS_CFG, {});
+
+      document.getElementById('vmTitle').textContent = item.name;
+      document.getElementById('vmMeta').textContent  = item.mat || '';
+
+      const viewer   = document.getElementById('vmViewer');
+      const canvas3mf= document.getElementById('vmCanvas3mf');
+      const noModel  = document.getElementById('vmNoModel');
+      const arBtn    = document.getElementById('vmAR');
+
+      // Resolver URL del modelo (puede ser idb: o ruta local o HTTP)
+      let modelUrl  = item.glb || '';
+      let glbType   = item.glbType || (modelUrl.toLowerCase().endsWith('.3mf') ? '3mf' : 'glb');
+      if (modelUrl.startsWith('idb:')) {
+        try {
+          const buf = await nxIdbGetLocal(modelUrl.slice(4));
+          if (!buf) throw new Error('no encontrado');
+          modelUrl = URL.createObjectURL(new Blob([buf], { type: glbType==='3mf' ? 'model/3mf' : 'model/gltf-binary' }));
+        } catch(e) {
+          modelUrl = '';
+        }
+      } else if (modelUrl && !modelUrl.startsWith('http') && !modelUrl.startsWith('blob:') && !modelUrl.startsWith('data:')) {
+        modelUrl = modelUrl.split('/').map(s => encodeURIComponent(s)).join('/');
+      }
+
+      const imgView = document.getElementById('vmImgView');
+      const imgEl   = document.getElementById('vmImgEl');
+
+      // Abrir el modal ANTES de cargar el 3MF: el canvas necesita dimensiones reales
+      const modal = document.getElementById('viewerModal');
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+
+      // Ocultar todo por defecto
+      viewer.style.display = 'none'; canvas3mf.style.display = 'none';
+      noModel.style.display = 'none'; imgView.style.display = 'none';
+      arBtn.style.display = 'none';
+      const vm3mfSection = document.getElementById('vm3mfSection');
+      if (vm3mfSection) { vm3mfSection.style.display = 'none'; document.getElementById('vm3mfSwatches').innerHTML = ''; }
+      if (window.NX_3MF) window.NX_3MF.dispose();
+
+      // Imagen de poster/referencia
+      const imgSrc = item.img || '';
+      if (imgSrc && viewer) viewer.setAttribute('poster', imgSrc);
+
+      if (!modelUrl) {
+        if (imgSrc) {
+          // Mostrar imagen de referencia cuando no hay modelo 3D
+          imgEl.src = imgSrc;
+          imgView.style.display = 'flex';
+        } else {
+          noModel.style.display = 'flex';
+          document.getElementById('vmNoModelMsg').textContent = item.glb ? 'No se pudo cargar el archivo.' : 'Agrega un modelo desde el panel de administración.';
+        }
+      } else if (glbType === '3mf') {
+        canvas3mf.style.display = 'block';
+        try {
+          const modelColors = await window.NX_3MF.load(modelUrl, canvas3mf);
+          _render3mfColorSwatches(modelColors || []);
+        } catch(e) {
+          canvas3mf.style.display = 'none';
+          if (imgSrc) { imgEl.src = imgSrc; imgView.style.display = 'flex'; }
+          else { noModel.style.display = 'flex'; document.getElementById('vmNoModelMsg').textContent = 'No se pudo cargar el 3MF.'; }
+        }
+      } else {
+        viewer.style.display = 'block';
+        viewer.removeAttribute('src');
+        setTimeout(() => { viewer.setAttribute('src', modelUrl); }, 50);
+        arBtn.style.display = 'flex';
+        arBtn.href = modelUrl;
+      }
+
+      // Colores disponibles
+      const colorIds = item.colorIds || [];
+      const vmColors = document.getElementById('vmColors');
+      // Si el 3MF expuso sus colores por partes, ese selector reemplaza al global
+      if (vm3mfSection && vm3mfSection.style.display === 'block') {
+        vmColors.style.display = 'none';
+        vmColors.innerHTML = '';
+      } else if (colorIds.length > 0) {
+        vmColors.style.display = 'flex';
+        const availFils = filaments.filter(f => colorIds.includes(f.id));
+        vmColors.innerHTML = availFils.map(f => {
+          const dark = isDarkHex(f.hex);
+          return `<button
+            title="${f.name}"
+            onclick="applyColorToViewer('${f.hex}','${f.rough||f.roughness||0.7}','${f.metal||f.metalness||0}',this)"
+            style="width:36px;height:36px;border-radius:50%;background:${f.hex};border:2px solid ${dark?'rgba(255,255,255,.25)':'rgba(255,255,255,.12)'};cursor:pointer;transition:transform .15s,outline .15s;outline:2px solid transparent;outline-offset:3px;"
+            onmouseover="this.style.transform='scale(1.18)'"
+            onmouseout="this.style.transform='scale(1)'"
+          ></button>`;
+        }).join('');
+      } else {
+        vmColors.style.display = 'flex';
+        vmColors.innerHTML = '<p style="font-size:13px;color:#4A5A72;">Sin colores registrados. Agrégalos desde el admin.</p>';
+      }
+
+      // Botón WhatsApp del viewer
+      const wa    = cfg.wa || '528297996751';
+      const msg   = (cfg.waPieza || '¡Hola NEXOMAKER3D! Me interesa la pieza "{nombre}". ¿Me pueden dar más información y precio?').replace('{nombre}', item.name);
+      document.getElementById('vmWa').href = `https://wa.me/${wa}?text=${encodeURIComponent(msg)}`;
+    }
+
+    function closeViewer() {
+      document.getElementById('viewerModal').style.display = 'none';
+      document.body.style.overflow = '';
+      document.getElementById('vmViewer').removeAttribute('src');
+      const pk = document.getElementById('_3mfPicker'); if (pk) pk.remove();
+      if (window.NX_3MF) window.NX_3MF.dispose();
+    }
+
+    // Renderiza un swatch por cada color detectado en el modelo 3MF
+    function _render3mfColorSwatches(colors) {
+      const section   = document.getElementById('vm3mfSection');
+      const container = document.getElementById('vm3mfSwatches');
+      if (!section || !container) return;
+      if (!colors || !colors.length) { section.style.display = 'none'; return; }
+
+      container.innerHTML = colors.map((hex, i) => {
+        const dark = isDarkHex(hex);
+        return `<div style="display:inline-flex;flex-direction:column;align-items:center;gap:3px;">
+          <button data-model-hex="${hex}" onclick="_show3mfPicker('${hex}',this)"
+            title="Color ${i+1} — toca para cambiar el filamento"
+            style="width:40px;height:40px;border-radius:10px;background:${hex};border:2px solid ${dark?'rgba(255,255,255,.3)':'rgba(0,0,0,.25)'};cursor:pointer;transition:transform .15s;"
+            onmouseover="this.style.transform='scale(1.12)'" onmouseout="this.style.transform='scale(1)'"></button>
+          <span style="font-size:10px;color:#4A5A72;">Parte ${i+1}</span>
+        </div>`;
+      }).join('');
+      section.style.display = 'block';
+    }
+
+    // Popover flotante con los filamentos disponibles para repintar una parte
+    function _show3mfPicker(originalHex, btn) {
+      const prev = document.getElementById('_3mfPicker');
+      if (prev) { const same = prev._srcHex === originalHex; prev.remove(); if (same) return; }
+
+      const filaments = getFilaments();
+      if (!filaments.length) return;
+      const rect = btn.getBoundingClientRect();
+
+      const picker = document.createElement('div');
+      picker.id = '_3mfPicker';
+      picker._srcHex = originalHex;
+      picker.style.cssText = `position:fixed;top:${rect.bottom + 8}px;left:${Math.max(8, Math.min(rect.left - 60, window.innerWidth - 280))}px;background:#0D1520;border:1px solid #1A2535;border-radius:12px;padding:12px;display:flex;flex-wrap:wrap;gap:8px;max-width:260px;z-index:700;box-shadow:0 8px 32px rgba(0,0,0,.7);`;
+
+      filaments.forEach(f => {
+        const dark = isDarkHex(f.hex);
+        const b = document.createElement('button');
+        b.title = f.name;
+        b.style.cssText = `width:36px;height:36px;border-radius:8px;background:${f.hex};border:2px solid ${dark?'rgba(255,255,255,.25)':'rgba(0,0,0,.2)'};cursor:pointer;transition:transform .12s;`;
+        b.onmouseover = () => b.style.transform = 'scale(1.15)';
+        b.onmouseout  = () => b.style.transform = 'scale(1)';
+        b.onclick = () => {
+          window.NX_3MF.recolorPart(originalHex, f.hex, f.rough || f.roughness || 0.7, f.metal || f.metalness || 0);
+          btn.style.background = f.hex;
+          btn.dataset.modelHex = f.hex;
+          btn.style.borderColor = isDarkHex(f.hex) ? 'rgba(255,255,255,.3)' : 'rgba(0,0,0,.25)';
+          btn.setAttribute('onclick', `_show3mfPicker('${f.hex}',this)`);
+          picker.remove();
+          document.removeEventListener('click', closePicker, true);
+        };
+        picker.appendChild(b);
+      });
+
+      const closePicker = e => {
+        if (!picker.contains(e.target) && e.target !== btn) {
+          picker.remove();
+          document.removeEventListener('click', closePicker, true);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', closePicker, true), 0);
+      document.body.appendChild(picker);
+    }
+
+    function applyColorToViewer(hex, rough, metal, btn) {
+      const viewer = document.getElementById('vmViewer');
+      if (!viewer) return;
+
+      // Destacar botón activo
+      document.querySelectorAll('#vmColors button').forEach(b => b.style.outline = '2px solid transparent');
+      if (btn) btn.style.outline = '2px solid #6B9FD4';
+
+      const applyMat = () => {
+        if (!viewer.model) return;
+        const r = parseInt(hex.slice(1,3),16)/255;
+        const g = parseInt(hex.slice(3,5),16)/255;
+        const b = parseInt(hex.slice(5,7),16)/255;
+        viewer.model.materials.forEach(mat => {
+          mat.pbrMetallicRoughness.setBaseColorFactor([r, g, b, 1]);
+          if (mat.pbrMetallicRoughness.roughnessFactor !== undefined)
+            mat.pbrMetallicRoughness.roughnessFactor = parseFloat(rough);
+          if (mat.pbrMetallicRoughness.metallicFactor !== undefined)
+            mat.pbrMetallicRoughness.metallicFactor  = parseFloat(metal);
+        });
+      };
+
+      if (viewer.model) applyMat();
+      else viewer.addEventListener('load', applyMat, { once: true });
+    }
+
+    // Cerrar visor con Escape
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer(); });
+
+    // ============================================================
+    // CONSTRUIR SELECTOR DE FILAMENTOS DINÁMICO
+    // ============================================================
+    function isDarkHex(hex) {
+      if (!hex || hex.length < 7) return false;
+      const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+      return (r*299 + g*587 + b*114) / 1000 < 80;
+    }
+
+    function buildFilamentSelector() {
+      const filaments = getFilaments();
+      const selector  = document.getElementById('filamentSelector');
+      if (!selector) return;
+
+      selector.innerHTML = filaments.filter(f => f.stock !== false || true).map((f, i) => {
+        const dark  = isDarkHex(f.hex);
+        const border = dark ? 'box-shadow:0 0 0 1.5px rgba(255,255,255,0.25) inset;' : '';
+        const shortName = f.name.replace(/\s+/g, '<br>').replace(/(<br>.*?)<br>.*$/, '$1');
+        return `
+          <button class="filament-btn${i===0?' active':''}" data-filament="${f.id}" title="${f.name}">
+            <div class="filament-swatch" style="background:${f.hex};${border}"></div>
+            <span class="filament-btn-label">${shortName}</span>
+          </button>
+        `;
+      }).join('');
+
+      // Re-enlazar evento delegado
+      selector.addEventListener('click', e => {
+        const btn = e.target.closest('.filament-btn');
+        if (btn) setFilamentById(btn.dataset.filament);
+      });
+    }
+
+    function setFilamentById(id) {
+      const filaments = getFilaments();
+      const f = filaments.find(x => x.id === id);
+      if (!f) return;
+
+      // Actualizar info overlay
+      document.getElementById('filamentName').textContent = f.name;
+      document.getElementById('filamentDesc').textContent = f.desc;
+      document.getElementById('filamentSpecs').innerHTML = [
+        { label: 'Tipo', value: f.type || '—' },
+      ].map(s=>`<div class="spec-chip"><span class="spec-chip-label">${s.label}</span><span class="spec-chip-value">${s.value}</span></div>`).join('');
+
+      // Guardar filamento activo y aplicarlo al model-viewer del showcase
+      window._pendingFil = f;
+      applyColorToShowcase(f.hex, f.rough ?? f.roughness ?? 0.7, f.metal ?? f.metalness ?? 0);
+
+      // Botón activo
+      document.querySelectorAll('.filament-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filament === id);
+      });
+    }
+
+    // ============================================================
+    // SHOWCASE MODELS — modelos del muestrario
+    // ============================================================
+    const LS_SHOWCASE = 'nx_showcase_models';
+
+    function getShowcaseModels() {
+      return lsGet(LS_SHOWCASE, []) || [];
+    }
+
+    // ============================================================
+    // RUEDA SOLAR — light sphere interactivo
+    // ============================================================
+    // Estado de la luz
+    let _sunAz = 0.6, _sunEl = 0.75; // radianes
+
+    // Dibuja la rueda solar en el canvas
+    function drawLightSphere(az, el) {
+      const cv  = document.getElementById('lightSphere');
+      if (!cv) return;
+      const ctx = cv.getContext('2d');
+      const cx = 50, cy = 50, R = 46;
+      ctx.clearRect(0, 0, 100, 100);
+
+      // Fondo esférico (hemispherio)
+      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+      bg.addColorStop(0, '#1A2535');
+      bg.addColorStop(1, '#080D15');
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.fill();
+
+      // Líneas de guía
+      ctx.strokeStyle = 'rgba(107,159,212,0.15)'; ctx.lineWidth = 1;
+      for (let i = 1; i <= 3; i++) {
+        ctx.beginPath(); ctx.arc(cx, cy, R*i/3.5, 0, Math.PI*2); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(cx-R, cy); ctx.lineTo(cx+R, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy-R); ctx.lineTo(cx, cy+R); ctx.stroke();
+
+      // Posición del sol en el canvas:
+      // - Centro del círculo = sol en cénit (overhead)
+      // - Borde del círculo = sol en el horizonte
+      // El radio desde el centro escala con (π/2 - el) / (π/2)
+      const t    = (Math.PI/2 - el) / (Math.PI/2); // 0=cénit, 1=horizonte
+      const dotX = cx + R * t * Math.cos(az);
+      const dotY = cy - R * t * Math.sin(az);  // sin en Y (negado por ejes canvas)
+
+      // Glow alrededor del sol
+      const glow = ctx.createRadialGradient(dotX, dotY, 0, dotX, dotY, 14);
+      glow.addColorStop(0, 'rgba(255,200,80,0.7)');
+      glow.addColorStop(1, 'rgba(255,180,40,0)');
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(dotX, dotY, 14, 0, Math.PI*2); ctx.fill();
+
+      // Sol
+      ctx.fillStyle = '#FFCC44'; ctx.beginPath(); ctx.arc(dotX, dotY, 6, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,200,0.8)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(dotX, dotY, 7, 0, Math.PI*2); ctx.stroke();
+    }
+
+    // Convierte posición del canvas a azimuth + elevation
+    function canvasToAzEl(cx, cy, canvasEl) {
+      const rect = canvasEl.getBoundingClientRect();
+      const px = (cx - rect.left) / rect.width;
+      const py = (cy - rect.top)  / rect.height;
+      const nx = (px - 0.5) * 2; // -1 a 1
+      const ny = (py - 0.5) * -2;
+      const dist = Math.sqrt(nx*nx + ny*ny);
+      const clamped = Math.min(dist, 1);
+      const az = Math.atan2(ny, nx);
+      const el = (Math.PI/2) * (1 - clamped);
+      return { az, el };
+    }
+
+    // Handlers de arrastre
+    function initLightSphere() {
+      const cv = document.getElementById('lightSphere');
+      if (!cv) return;
+      drawLightSphere(_sunAz, _sunEl);
+
+      let dragging = false;
+      const move = (clientX, clientY) => {
+        const { az, el } = canvasToAzEl(clientX, clientY, cv);
+        _sunAz = az; _sunEl = el;
+        drawLightSphere(az, el);
+        setShowcaseLight(az, el);
+      };
+      cv.addEventListener('mousedown',  e => { dragging=true; move(e.clientX, e.clientY); });
+      cv.addEventListener('mousemove',  e => { if(dragging) move(e.clientX, e.clientY); });
+      cv.addEventListener('mouseup',    () => dragging=false);
+      cv.addEventListener('mouseleave', () => dragging=false);
+      cv.addEventListener('touchstart', e => { e.preventDefault(); dragging=true; move(e.touches[0].clientX, e.touches[0].clientY); }, { passive:false });
+      cv.addEventListener('touchmove',  e => { e.preventDefault(); if(dragging) move(e.touches[0].clientX, e.touches[0].clientY); }, { passive:false });
+      cv.addEventListener('touchend',   () => dragging=false);
+    }
+
+    // Genera env-map equirrectangular PNG (Blob URL) con sol en az/el
+    // Fondo claro para mantener luminancia similar a environment-image="neutral"
+    let _envBlobUrl = null;
+    let _lightBusy  = false;
+    let _pendingLight = null;
+
+    function setShowcaseLight(az, el) {
+      _pendingLight = { az, el };
+      if (!_lightBusy) _flushLight();
+    }
+
+    function _flushLight() {
+      if (!_pendingLight) return;
+      const { az, el } = _pendingLight;
+      _pendingLight = null;
+      _lightBusy = true;
+
+      const W = 128, H = 64;
+      const cv2 = document.createElement('canvas');
+      cv2.width = W; cv2.height = H;
+      const ctx = cv2.getContext('2d');
+
+      // Fondo gris claro — luminancia ~71% lineal, par con HDR neutral
+      ctx.fillStyle = '#d0d0d0';
+      ctx.fillRect(0, 0, W, H);
+
+      // Sol en equirrectangular: az -π..π → x 0..W, el 0..π/2 → y H/2..0
+      const sunX = ((az + Math.PI) / (2 * Math.PI)) * W;
+      const sunY = H * 0.5 - (el / (Math.PI * 0.5)) * H * 0.46;
+      const R = W * 0.30;
+
+      for (const ox of [sunX - W, sunX, sunX + W]) {
+        const g = ctx.createRadialGradient(ox, sunY, 0, ox, sunY, R);
+        g.addColorStop(0,    'rgba(255,255,255,1.0)');
+        g.addColorStop(0.06, 'rgba(255,250,230,0.97)');
+        g.addColorStop(0.2,  'rgba(255,235,180,0.60)');
+        g.addColorStop(0.5,  'rgba(245,225,180,0.18)');
+        g.addColorStop(1,    'rgba(208,208,208,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      cv2.toBlob(blob => {
+        _lightBusy = false;
+        if (_envBlobUrl) URL.revokeObjectURL(_envBlobUrl);
+        _envBlobUrl = URL.createObjectURL(blob);
+        const sv = document.getElementById('showcaseViewer');
+        if (sv) {
+          sv.setAttribute('environment-image', _envBlobUrl);
+          sv.setAttribute('exposure', '0.90');
+        }
+        if (_pendingLight) _flushLight(); // aplicar posición más reciente si hubo updates
+      }, 'image/png');
+    }
+
+    // ============================================================
+    // TOGGLE ROTACIÓN AUTOMÁTICA
+    // ============================================================
+    function toggleAutoRotate() {
+      const sv = document.getElementById('showcaseViewer');
+      if (!sv) return;
+      const rotating = sv.hasAttribute('auto-rotate');
+      rotating ? sv.removeAttribute('auto-rotate') : sv.setAttribute('auto-rotate', '');
+      const btn = document.getElementById('rotateToggle');
+      if (btn) {
+        const now = !rotating;
+        btn.textContent    = now ? '⏸ Pausar' : '▶ Girar';
+        btn.style.color    = now ? '#6B9FD4' : '#8899B4';
+        btn.style.borderColor = now ? 'rgba(107,159,212,.35)' : 'rgba(136,153,180,.25)';
+      }
+    }
+
+    // (intensidad y temperatura eliminadas — fijas para fidelidad de color)
+
+    // ============================================================
+    // SHOWCASE — construir tabs y cargar modelos via Three.js
+    // ============================================================
+    function buildShowcaseTabs() {
+      const models   = getShowcaseModels().filter(m => m.url);
+      const tabsEl   = document.getElementById('showcaseTabs');
+      const lightsEl = document.getElementById('lightingControls');
+      const ph       = document.getElementById('filamentPlaceholder');
+      if (!tabsEl) return;
+
+      if (!models.length) {
+        tabsEl.style.display    = 'none';
+        lightsEl.style.display  = 'none';
+        ph.style.display        = 'flex';
+        ph.innerHTML = `
+          <svg style="width:48px;height:48px;margin-bottom:14px;opacity:.25;" viewBox="0 0 24 24" fill="none" stroke="#6B9FD4" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <p style="font-size:13px;color:#4A5A72;line-height:1.6;margin-bottom:12px;">Agrega modelos .glb desde el<br>panel de administración</p>
+          <a href="admin.html" style="font-size:12px;color:#6B9FD4;font-weight:600;text-decoration:none;border:1px solid rgba(107,159,212,.3);border-radius:100px;padding:6px 16px;">Abrir admin →</a>`;
+        return;
+      }
+
+      lightsEl.style.display = 'none';
+
+      if (models.length > 1) {
+        tabsEl.style.display = 'flex';
+        tabsEl.innerHTML = models.map((m, i) =>
+          `<button class="showcase-tab${i===0?' active':''}" data-idx="${i}" onclick="setShowcaseModel(${i})">${m.name||'Modelo '+(i+1)}</button>`
+        ).join('');
+      } else {
+        tabsEl.style.display = 'none';
+      }
+
+      setShowcaseModel(0);
+    }
+
+    async function setShowcaseModel(idx) {
+      const models = getShowcaseModels().filter(m => m.url);
+      if (!models[idx]) return;
+
+      document.querySelectorAll('.showcase-tab').forEach(t => {
+        t.classList.toggle('active', parseInt(t.dataset.idx) === idx);
+      });
+
+      const sv = document.getElementById('showcaseViewer');
+      const ph = document.getElementById('filamentPlaceholder');
+
+      // Mostrar placeholder encima del model-viewer durante carga (model-viewer nunca se oculta para que WebGL se inicialice)
+      if (ph) { ph.style.display = 'flex'; ph.innerHTML = '<div class="nx-spin"></div><p style="margin-top:12px;font-size:13px;color:#4A5A72;">Cargando modelo...</p>'; }
+
+      let url = models[idx].url;
+      let resolvedUrl = url;
+
+      if (url.startsWith('idb:')) {
+        // Modelo cargado desde el file picker — recuperar de IndexedDB
+        try {
+          const buf = await nxIdbGetLocal(url.slice(4));
+          if (!buf) throw new Error('no encontrado');
+          resolvedUrl = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }));
+        } catch(e) {
+          if (ph) { ph.style.display = 'flex'; ph.innerHTML = '<p style="font-size:13px;color:#f87171;">Modelo local no encontrado.<br><span style="font-size:11px;color:#4A5A72;">Vuelve a cargarlo desde el admin.</span></p>'; }
+          return;
+        }
+      } else if (!url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+        // Ruta local — codificar espacios y caracteres especiales
+        resolvedUrl = url.split('/').map(seg => encodeURIComponent(seg)).join('/');
+      }
+
+      if (!sv) return;
+
+      sv.removeAttribute('src');
+      requestAnimationFrame(() => { sv.src = resolvedUrl; });
+
+      sv.addEventListener('load', () => {
+        if (ph) ph.style.display = 'none';
+        // Aplicar color del filamento activo
+        if (window._pendingFil) {
+          const f = window._pendingFil;
+          applyColorToShowcase(f.hex, f.rough ?? f.roughness ?? 0.7, f.metal ?? f.metalness ?? 0);
+        }
+        // Mostrar botón pause/girar
+        const tb = document.getElementById('rotateToggle');
+        if (tb) { tb.style.display = 'flex'; tb.textContent = '⏸ Pausar'; tb.style.color = '#6B9FD4'; }
+      }, { once: true });
+
+      sv.addEventListener('error', () => {
+        if (ph) { ph.style.display = 'flex'; ph.innerHTML = '<p style="font-size:13px;color:#f87171;">No se pudo cargar el modelo</p><p style="font-size:11px;color:#4A5A72;margin-top:6px;">Verifica que la ruta sea correcta y el archivo sea .glb</p>'; }
+      }, { once: true });
+    }
+
+    // Recupera un ArrayBuffer de IndexedDB (versión para el script regular)
+    function nxIdbGetLocal(key) {
+      return new Promise((res, rej) => {
+        const req = indexedDB.open('nexomaker3d', 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore('models');
+        req.onsuccess = e => {
+          const tx = e.target.result.transaction('models', 'readonly');
+          const r  = tx.objectStore('models').get(key);
+          r.onsuccess = () => res(r.result);
+          r.onerror   = () => rej(r.error);
+        };
+        req.onerror = () => rej(req.error);
+      });
+    }
+
+    // sRGB → linear (modelo-viewer setBaseColorFactor requiere linear, no sRGB)
+    function srgbToLinear(v) {
+      v /= 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    }
+
+    // Aplica color de filamento al model-viewer del showcase
+    function applyColorToShowcase(hex, roughness, metalness) {
+      const sv = document.getElementById('showcaseViewer');
+      const fd = document.getElementById('filamentDisplay');
+      if (!sv) return;
+      if (!sv.model) {
+        window._pendingFil = { hex, rough: roughness, metal: metalness };
+        return;
+      }
+
+      const r = srgbToLinear(parseInt(hex.slice(1,3),16));
+      const g = srgbToLinear(parseInt(hex.slice(3,5),16));
+      const b = srgbToLinear(parseInt(hex.slice(5,7),16));
+
+      sv.model.materials.forEach(mat => {
+        mat.pbrMetallicRoughness.setBaseColorFactor([r, g, b, 1]);
+        if (mat.pbrMetallicRoughness.roughnessFactor !== undefined)
+          mat.pbrMetallicRoughness.roughnessFactor = parseFloat(roughness) || 0.7;
+        if (mat.pbrMetallicRoughness.metallicFactor !== undefined)
+          mat.pbrMetallicRoughness.metallicFactor  = parseFloat(metalness) || 0;
+      });
+
+      // Fondo + exposure adaptativos según luminancia del filamento
+      const rS = parseInt(hex.slice(1,3),16)/255;
+      const gS = parseInt(hex.slice(3,5),16)/255;
+      const bS = parseInt(hex.slice(5,7),16)/255;
+      const lum = 0.2126*rS + 0.7152*gS + 0.0722*bS;
+
+      // Fondo: colores oscuros reciben fondo más claro para silueta visible
+      const bg = lum < 0.12 ? '#2c3d52' : '#0D1520';
+      sv.style.background = bg;
+      if (fd) fd.style.background = bg;
+
+      // Exposure adaptativa: materiales muy oscuros necesitan alta exposición para mostrar geometría
+      const exp = lum < 0.04 ? '3.5' : lum < 0.12 ? '2.0' : '1.0';
+      sv.setAttribute('exposure', exp);
+    }
+
+    // ============================================================
+    // SCROLL: progreso + nav + parallax
+    // ============================================================
+    const scrollProgress = document.getElementById('scrollProgress');
+    const mainNav        = document.getElementById('mainNav');
+    const heroBg         = document.getElementById('heroBg');
+    const heroSection    = document.getElementById('hero');
+
+    // Actualizar en tiempo real si admin cambia settings en otra pestaña
+    window.addEventListener('storage', e => {
+      if (e.key === LS_CFG)       applySettings();
+      if (e.key === LS_FIL)       { buildFilamentSelector(); const fils = getFilaments(); if (fils.length) setFilamentById(fils[0].id); }
+      if (e.key === LS_SHOWCASE)  buildShowcaseTabs();
+    });
+
+    window.addEventListener('scroll', () => {
+      const scrollY   = window.scrollY;
+      const docH      = document.documentElement.scrollHeight - window.innerHeight;
+      const progress  = docH > 0 ? (scrollY / docH) * 100 : 0;
+
+      // Barra de progreso
+      scrollProgress.style.width = progress + '%';
+
+      // Nav al hacer scroll
+      if (scrollY > 60) {
+        mainNav.classList.add('scrolled');
+      } else {
+        mainNav.classList.remove('scrolled');
+      }
+
+      // Parallax del hero (solo mientras es visible)
+      if (heroSection && scrollY < window.innerHeight) {
+        heroBg.style.transform = `translateY(${scrollY * 0.28}px)`;
+      }
+
+    }, { passive: true });
+
+  </script>
+
+</body>
+</html>
