@@ -12,9 +12,9 @@
       "featured": true,
       "img": "",
       "imgName": "",
-      "glb": "__pending__",
+      "glb": "assets/Models/Mini_spidy_mk2_colour_3mf__1_.3mf",
       "glbName": "Mini+spidy+mk2+colour+3mf (1).3mf",
-      "glbType": "",
+      "glbType": "glb",
       "colorIds": [
         "pla-negro",
         "pla-oro",
@@ -42,7 +42,7 @@
       "featured": true,
       "img": "",
       "imgName": "",
-      "glb": "__pending__",
+      "glb": "assets/Models/Supporto_GPU_ROG_STRIX.glb",
       "glbName": "Supporto+GPU+ROG+STRIX.glb",
       "glbType": "glb",
       "colorIds": [
