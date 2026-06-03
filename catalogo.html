@@ -412,6 +412,7 @@
       collection: 'Figuras',
       glb: 'assets/Models/Mini+spidy+mk2+colour+3mf.glb',
       glbType: 'glb',
+      arScale: '0.001 0.001 0.001',
       vis: true,
       featured: true,
       colorIds: ['pla-rojo','pla-negro','pla-azul','pla-blanco']
@@ -650,6 +651,9 @@
     } else {
       viewer.style.display='block';
       viewer.removeAttribute('src');
+      // Escala AR: si el modelo está en mm (exportado de slicer), convertir a metros
+      if (item.arScale) viewer.setAttribute('scale', item.arScale);
+      else viewer.removeAttribute('scale');
       setTimeout(()=>{ viewer.setAttribute('src', modelUrl); }, 50);
       arBtn.style.display='flex';
     }
