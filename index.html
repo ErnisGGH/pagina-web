@@ -2378,7 +2378,7 @@
         const _ext = (item.glbType || item.glbName || '').toLowerCase();
         const hasGlb = item.glb && !_ext.includes('3mf');
         return `
-          <article class="catalog-card scroll-reveal" data-category="${item.cat||''}" data-id="${item.id}" style="cursor:pointer;" onclick="openViewer('${item.id}')">
+          <article class="catalog-card scroll-reveal" data-category="${item.cat||''}" data-id="${item.id}" style="cursor:pointer;" onclick="window.location.href='catalogo.html?open=${item.id}'">
             <div class="card-media" style="cursor:pointer;">
               ${hasGlb ? `<span class="ar-badge">AR</span>` : ''}
               ${item.img ? `
@@ -2396,10 +2396,10 @@
               </div>`}
               <div class="card-overlay">
                 <div class="card-overlay-btns">
-                  <button class="btn-view3d" onclick="event.stopPropagation();openViewer('${item.id}')">
+                  <button class="btn-view3d" onclick="event.stopPropagation();window.location.href='catalogo.html?open=${item.id}'">
                     <i data-lucide="box" style="width:12px;height:12px;flex-shrink:0;"></i> Ver 3D
                   </button>
-                  ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();openViewerForAR('${item.id}')">
+                  ${hasGlb ? `<button class="btn-ar-card" onclick="event.stopPropagation();window.location.href='catalogo.html?ar=${item.id}'">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AR
                   </button>` : ''}
                 </div>
@@ -2477,7 +2477,8 @@
     // VISOR 3D — abrir / cerrar / cambiar color
     // ============================================================
     async function openViewer(itemId) {
-      const allItems = lsGet(LS_CAT, []);
+      const stored   = lsGet(LS_CAT, null);
+      const allItems = (stored && stored.length) ? stored : DEF_CAT;
       const item     = allItems.find(x => x.id === itemId);
       if (!item) return;
 
